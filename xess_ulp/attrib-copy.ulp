@@ -1,0 +1,197 @@
+string Version = "1.00";
+
+
+#usage "\
+<b>Copy Attributes</b> \
+<p>\
+Copy attributes from one part to a group of selected part(s) in a schematic. \
+<p>\
+<author>Author: Dave Vandenbout / XESS Corp. - devb@xess.com</author>\
+<p>\
+Version: 1.00\
+"
+
+
+string strCmd;     // script command text
+
+string HelpText = "\
+<h1>Copying Attributes</h1> \
+<p> \
+Adding attributes to parts is a pain. \
+This ULP lets you copy the attributes of a single part to a bunch of parts as follows: \
+<ol>\
+<li>Select one or more parts in the schematic.</li>\
+<li>Start the <b>attrib-copy</b> ULP.</li>\
+<li>Type the part identifier of the part from which the attributes are to be copied.\
+(It doesn't have to be in the selection group.) </li>\
+<li>Press <b>OK</b></li>\
+</ol>\
+<p>\
+All the attributes from the given part are copied to every part in the selection under the following conditions:\
+<ul> \
+<li>The parts have the same value.</li>\
+<li>The parts have the same description.</li>\
+<li>The parts have the same headline.</li>\
+<li>The parts have the same prefix.</li>\
+<li>The parts are from the same library.</li>\
+<li>The part packages have the same description.</li>\
+<li>The part packages have the same headline.</li>\
+<li>The part packages are from the same library.</li>\
+<li>The part packages have the same name.</li>\
+</ul>\
+<p>\
+As an example of using this tool, suppose you have a schematic with one-hundred parts and twenty of them \
+are identical bypass capacitors.  Add the attributes you want to one of these capacitors, say C5. \
+Then select the entire schematic and start <b>attrib-copy</b>. \
+Type 'C5' into the <b>Copy from</b> field and click on <b>OK</b>. \
+Then all the attributes are copied from C5 to every capacitor that has the same characteristics as C5. \
+<h1>Authors</h1>\
+<p>\
+Author: Dave Vandenbout / XESS Corp. - <a href=\"mailto:devb@xess.com?subject=attrib-copy ULP\">devb@xess.com</a>\
+";
+
+void DisplayHelp(void)
+{
+    dlgDialog("Copy Attributes - Help") {
+        dlgHBoxLayout dlgSpacing(400);
+        dlgHBoxLayout {
+            dlgVBoxLayout dlgSpacing(300);
+            dlgTextView(HelpText);
+        }
+        dlgHBoxLayout {
+            dlgStretch(1);
+            dlgPushButton("-Close") dlgReject();
+        }
+    };
+}
+
+
+int GetSelCount(UL_SCHEMATIC sch)
+{
+    int cnt = 0;
+
+    sch.parts(P)
+    {
+        if (ingroup(P))
+        {
+            // make sure it has a package and name
+            if (P.device.package && P.name)
+            ++cnt;
+        }
+    }
+
+    return cnt;
+}
+
+
+if (schematic)
+{
+    schematic(SCH)
+    {
+        //        fileName = filesetext(SCH.name, "_CopyAttribs.scr");
+
+        string title = "Copy Attributes - v" + Version;
+        
+        if (GetSelCount(SCH) == 0)
+        {
+            dlgMessageBox("Please select some parts before starting this ULP!");
+            exit(0);
+        }
+
+        string fromPart = "";
+        int Result = dlgDialog(title)
+        {
+            
+            dlgHBoxLayout
+            {
+                dlgLabel("Copy from:");
+                dlgStringEdit(fromPart);
+                dlgStretch(50);
+            }
+            dlgHBoxLayout
+            {
+                dlgPushButton("&Help") DisplayHelp();
+                dlgStretch(1);
+                dlgPushButton("+OK") dlgAccept();
+                dlgPushButton("Cancel") dlgReject();
+            }
+        };
+
+        if (!Result)
+        exit(0);
+
+        fromPart = strupr(fromPart);
+        int cnt = 0;
+        SCH.parts(F)
+        {
+            if(fromPart == F.name)
+            {
+
+                strCmd = "";
+
+                SCH.parts(P)
+                {
+                    if (ingroup(P))
+                    {
+                        // make sure it has a package and name
+                        if (P.device.package && P.name)
+                        {
+                            if(P.device.description != F.device.description)
+                            continue;
+                            if(P.device.headline != F.device.headline)
+                            continue;
+                            if(P.device.library != F.device.library)
+                            continue;
+                            if(P.device.package.description != F.device.package.description)
+                            continue;
+                            if(P.device.package.headline != F.device.package.headline)
+                            continue;
+                            if(P.device.package.library != F.device.package.library)
+                            continue;
+                            if(P.device.package.name != F.device.package.name)
+                            continue;
+                            if(P.device.prefix != F.device.prefix)
+                            continue;
+                            if(P.device.technologies != F.device.technologies)
+                            continue;
+                            if(P.value != F.value)
+                            continue;
+                            F.attributes(A)
+                            {
+                                switch(A.display)
+                                {
+                                case ATTRIBUTE_DISPLAY_FLAG_VALUE:
+                                    strCmd += "CHANGE DISPLAY VALUE;\n";
+                                    break;
+                                case ATTRIBUTE_DISPLAY_FLAG_NAME:
+                                    strCmd += "CHANGE DISPLAY NAME;\n";
+                                    break;
+                                case ATTRIBUTE_DISPLAY_FLAG_VALUE | ATTRIBUTE_DISPLAY_FLAG_NAME:
+                                    strCmd += "CHANGE DISPLAY BOTH;\n";
+                                    break;
+                                default:
+                                    strCmd += "CHANGE DISPLAY OFF;\n";
+                                    break;
+                                }
+                                strCmd += "ATTRIBUTE " + P.name + " '" + A.name + "' '" + A.value + "';\n";
+                            }
+                            ++cnt;
+                        }
+                    }
+                }
+                if (!cnt)
+                dlgMessageBox("No items selected!");
+            }
+        }
+        if (!cnt)
+        dlgMessageBox(fromPart + " item not found!");
+        //dlgMessageBox(strCmd);
+        exit(strCmd);
+    }
+}
+else
+{
+    dlgMessageBox("Start this ULP in Schematic!", "OK");
+}
+
+// End-Of-File

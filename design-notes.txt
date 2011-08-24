@@ -1,0 +1,436 @@
+CREATE PARTS
+============================================
+Use make-qfp.pl and make-bga.pl to create a library for complex
+parts like FPGAs and CPLDs.  The make-XSA-200-lib.pl file will
+create the script file for a library of parts containing the FPGA, 
+CPLD, SDRAM and Flash for the XSA-200 Board.
+
+1. Edit make-XSA-200-lib.pl to enter descriptions of parts.
+2. Run 'perl make-XSA-200-lib.pl > XSA-200-lib.scr'
+3. Start Eagle and open a new library.
+4. Run the XSA-200-lib.scr script.
+5. Save the library.
+
+
+CREATING A NEW SUPPLY VOLTAGE
+============================================
+1. Copy an old supply SYMBOL and store it under a new name
+   (e.g. copy "2.5V" symbol and store it as "1.5V" symbol).
+2. In the symbol editor, change the name of the symbol to the desired
+   supply voltage (e.g., "1.5V").
+3. Create a new part using the new supply symbol.  Name the
+   part with the supply voltage.
+
+
+CREATING XILINX PARTS
+============================================
+To enter the pin data for a Xilinx FPGA or CPLD:
+1. Create a simple project using the chip/package and then create
+   the pad report.  This will create a CSV file with a list of all 
+   the pin names and their pin numbers for the package in the 
+   project directory.  
+2. Run 'perl padrpt2tsv.pl < pad.csv > pad.tsv'.
+3. Open pad.tsv in Excel.  Column B of the top portion of pad.tsv 
+   contains the pin names and numbers in a format suitable that you 
+   can cut-and-paste into the spreadsheet for the part connections.
+4. You can cut-and-paste the bottom portion of pad.tsv into the
+   make-XSA-200-lib.pl file 
+
+
+CREATE THE CONNECTIONS BETWEEN PARTS
+============================================
+Create a spreadsheet that lists (in columns) the net names
+and the pins of each part connected to each net.  A parenthesized
+part identifier (e.g. "(U1)") is used to indicate columns that
+contain pins that should be included in the netlist.  The first
+column should have "Net Name" as its header.  This indicates the
+header row and the net names and part pins are on the lines below.
+If the part pin is numeric, it can just be listed in the cell.
+If it is alphanumeric (such as a BGA pin name, B6), then the pin
+number has to be in parentheses.  You can also include a parenthesized
+part identifier and pin number to make a connection to a pin on
+another device (e.g. (R1.5)).  You can also make multiple connections
+by listing them in a comma-separated list (e.g. (R1.5,U3.B13)).
+
+1. Create a spreadsheet with net names and part ids in each column
+   and with each row listing the connections for a given net.
+2. Save the spreadsheet as a tab-separated-value file such as XSA-200-pins.txt.
+3. Run 'perl tsv2netscript -ss XSA-200-pins.txt > XSA-200-pins.scr' to
+   create a NetScript file containing the netlist.
+4. Create an Eagle schematic containing the parts with their part identifiers
+   set to match those in the spreadsheet.
+5. Run the connect.ulp and select the NetScript file as its input.
+   This will create a small named net on each part pin.
+6. You can remove the net connections by running disconnect.ulp on the
+   same NetScript file.
+7. connect.ulp will not try to make connections to pins that already have connections.
+   Neither connect.ulp or disconnect.ulp will operate on local nets that
+   have names starting with "N$".
+
+For devices like FPGAs and CPLDs, you can assign general-purpose I/O pins to 
+non-configuration nets at random and use the unscramble-pins.ulp utility to
+optimize the final net<->pin assignments.  See ARRANGING THE CONNECTIONS.
+
+
+INCLUDING BOM INFORMATION
+==============================================
+1. Create a new schematic layer "part manf. & #" on layer 100.
+2. Smash the parts.
+3. Change the layer for the part value.
+4. Edit the part value and enter the part manufacturer and part number.
+5. Turn of the display attribute to hide this information before publishing.
+
+
+CREATING THE BOARD
+==============================================
+1. Open a board in Eagle.
+2. Use the xsa-brddim.scr script to create an XSA Board outline. 
+
+
+ARRANGING THE CONNECTIONS
+==============================================
+1. Arrange the parts on the board in their approximate locations.
+2. In the schematic, run unscramble-pins.ulp.  Select the device
+   whose pins you want to unscramble, usually an FPGA or CPLD.
+   The ULP will move nets between pins having the same swaplevel
+   on the device so that the nets don't cross over each other too much.
+   The device must be created such that each pin is an individual gate.
+   You can choose to rearrange the nets or the pins:
+      a. Rearranging nets moves the small net stubs in the schematic
+         but leaves the pins where they were.  The part retains its pin
+         ordering which makes it easier to understand where a net enters
+         the device.
+      b. Rearranging the pins moves the pins in the schematic but leaves
+         the net stubs where they were.  This will leave any arrangement
+         of nets alone while scrambling the pins on the device. 
+3. The ULP will create and run a script called u1-unscramble-pins.scr
+   (for device U1) that will unscramble the pins.  The ULP also creates
+   another script, u1-undo-unscramble-pins.scr that you can use to reverse
+   the unscrambling operation and return the schematic to its original state.
+4. CHECK THE PIN CONNECTIONS to make sure they are still valid!!!
+5. After unscrambling the pins for a part, run part-nets.ulp to generate
+   a tab-separated list of the nets and the part pins they are now connected to.
+   The list is alphabetically sorted by the net names.
+6. Open the spreadsheet containing the part interconnections.  Sort the 
+   spreadsheet based on the pins of the unscrambled part to get all the nets
+   connected to the part at the top of the sheet.  Then sort just those rows
+   based on the names of the nets.  Then open the list of unscrambled pins
+   in a separate spreadsheet and cut-and-paste the pin names into the 
+   connection spreadsheet.
+
+
+RESTRICTING WIRING INTO SENSITIVE AREAS
+==============================================
+1. Place polygons on the tRestrict, bRestrict and vRestrict layers to prevent 
+   the autorouter from routing through an area with sensitive analog signals.
+2. Use a script like the following to move the restriction polygons to other
+   layers so the autorouter can wire the analog signals:
+	layer 102 tRestrict_save;
+	layer 103 bRestrict_save;
+	display none;
+	display 41;
+	change layer 102 (4650 689) (4950 4650); #points on the restriction polygons
+	display none;
+	display 42;
+	change layer 103 (4650 689) (4950 4650);
+	display all;
+3. After the sensitive signals are routed, use the following script to restore
+   the restriction polygons:
+	layer 102 tRestrict_save;
+	layer 103 bRestrict_save;
+	display none;
+	display 102;
+	change layer 41 (4650 689) (4950 4650);
+	display none;
+	display 103;
+	change layer 42 (4650 689) (4950 4650);
+	display all;
+4. Create a net class called "Sensitive".  Set the width to 5 mil (or whatever) because
+   the class will be ignored by PCB_To_DSN.ulp if its width is 0.  In the schematic,
+   change the class of sensitive analog signals to "Sensitive".
+
+
+LAYING-OUT THE BOARD
+==============================================
+1. First, setup the design rules.  These are stored in the XSA-200.dru file.
+   Here are descriptions of the various sections:
+      Layers: Not too much to do on this page unless you have buried and blind vias.
+         For multilayer boards with only through-hole vias, just enter the
+         layer stack-up into the Setup field to define board layers.
+         (1+2*3+16) creates a board with inner layers 2 & 3 separated by a core
+         and outer layers 1 and 16 are foil attached with prepreg.
+         Interesting fact: 1 oz copper has a thickness of 1.4 mils = 0.035 mm.
+      Clearance: Define the various clearances between wires, pads and vias.
+         Wire-wire, wire-via and via-via clearance usually have the smallest
+         allowable clearance because both are covered with soldermask so
+         there is no possibility of a short.  Pad-pad, pad-via and pad-wire
+         clearance should be set as large as possible because pads are not
+         covered with soldermask and there could be solder bridges to a nearby
+         wire or via if the soldermask tolerances are sloppy.
+      Distance: These parameters specify the minimum distances from any copper
+         to the board's edge and between drill holes.  The most important of
+         these is the Copper/Dimension setting as it keeps autorouters from
+         placing wires too close to the board edge.  It also crops any power
+         or ground planes (or polygons) so they don't extend to the edge of
+         the board (which could cause shorts).
+      Sizes: The Minimum Width field sets the minimum line width.  This
+          affects your minimum trace spacing.  The Minimum Drill field 
+          sets the minimum drill hole size.  This affects your minimum via
+          drill hole size.  If you try to set line widths or drill holes
+          to less than the minimum, they will be automatically increased
+          to the values in these fields.
+      Restring: Define the size of the pad ring around the drill hole
+          for pads and vias. For a 24 mil via with a 10 mil hole, the minimum
+          pad ring should be set to 7 (7+10+7 = 24).
+      Shapes: Sets the roundness of SMD pad corners and can also apply special
+          shapes to pads to denote pin 1, top and bottom pads.
+      Supply: Defines the thermal shape in power and ground supply layers
+          (also in power and ground supply polygons).  The Gap field sets
+          the width of the four wires that connect a pad to the supply layer.
+          The Isolate Thermal field sets the width of the isolation gap
+          between the drill hole and the supply layer copper.  Check the
+          Restring box to place an inner copper ring around the drill hole
+          that connects to the supply layer through the four wires (recommended).
+          Usually leave the Restring box unchecked for Annulus since there
+          is little reason to surround a through-hole with a small copper
+          ring if it doesn't connect to the supply layer.  *** The isolate
+          settings don't do much if you define the power and ground layers
+          with polygons that have their own isolation setting. ***
+          Uncheck the box to generate thermals for vias because these are
+          not needed if vias are used to make power/ground connections for
+          SMD pads that are already connected to the via through a thin trace.
+      Masks: Set the solder mask and solder paste masks for pads and vias.
+          Make special note of the Limit field.  This should be set to
+          a value larger than the via drill size so that the vias are covered
+          with solder mask.  Leaving the vias uncovered will cause shorts
+          when the board goes through a solder-wave machine.  Set the solder
+          mask min and max to 2 mils to meet the spec on the BGA solder mask
+          diameter (pad = 0.4mm = 16mil, mask = 0.5mm = 20mil).
+      Misc: Set the types of checks done during a design rule check.
+          Set the number of errors to a large value so you don't get fooled
+          into thinking there are only a few errors.
+
+2. Finalize the part placement.
+
+3. Manually route wiring out of the BGA.  The Electra autorouter can't do this.
+      a. For BGAs with 1mm pad spacing, change the grid to 0.5mm and move the
+         BGA onto this grid using ctrl-click.
+      b. Leave the airwire layer enabled, but change its color to the background
+         color so you can still select and highlight nets but won't get distracted
+         by all the airwires.
+
+4. Place a via restriction rectangle over the bga routing area (don't cover
+   the wiring endpoints where they escape the BGA pad matrix).  This will
+   keep Electra from placing vias into the BGA matrix and slicing-up the
+   power and ground planes.
+
+5. Place top and bottom restriction areas on the left and right edges of the
+   board from top to bottom.  This will keep Electra from routing too close to
+   the board edge.  (The Distance parameter in the design rules doesn't seem
+   to prevent this.)
+
+6. Create the power and ground polygons.  Use these instead of supply layers.
+      a. Create the +3.3V polygon using the XSA-pwr-polygon.scr script.
+         Then use the CHANGE command to change the following polygon parameters:
+            Width = 10 mils
+            Pour = Solid
+            Spacing = not needed for solid planes, only cross-hatched planes
+            Isolate = 10 mils
+            Thermals = On (creates thermals for pads and vias unless you unchecked
+                       the generate thermals for vias box in the design rules.
+            Orphans = Off (removes any orphaned copper disconnected from the rest)
+            Rank = 6 (lowest rank.  higher-rank polygons subtract from this one.)
+      b. Create the +5V and +2.5V polygons.  The only difference in the settings for
+         these polygons is that their rank is set to 5 so they take precedence over 
+         the +3.3V polygon.
+      c. Create the GND polygon using the XSA-gnd-polygon.scr script.  The GND
+         polygon has the same parameters as the +3.3V polygon.
+      d. The 10 mil isolation + 24 mil via will not permit the power and ground
+         planes to snake between the 40 mil spacing of the vias in the BGA area.
+
+7. Run the PCB_To_DSN.ulp to export the partial layout to Electra.
+
+8. Run Electra with the xsa-200.do file.
+
+9. In Electra, execute the command 'unprotect all wires'.  Then Export=>Script to
+   create a script that will re-build the wiring in Eagle.
+
+10. In Eagle, execute the command 'ripup;' to delete all the wiring.  Then execute
+   the script from Electra to re-build the wiring.
+
+11. Run length-freq-ri.ulp to find the nets with the longest routes.
+
+12. Run the 'xsa-fiducials.scr' script to place fiducials in the corners of the
+    board on the front and back sides.  Then place fiducials at opposite corners 
+    of the BGA to guide the pick-and-place machine.  The fiducial should be:
+       Size: 25 - 40 mils in diameter
+       Soldermask: 45 - 60 mils in diameter so the fiducial is exposed
+    Place circles in the top and/or bottom keepout layers to keep the autorouter
+    from getting wires too close to the fiducials.
+
+13. Place vias near the power regulators for connection to the power planes.
+    Make copies of a via already connected to the power plane.  Then create a 
+    copper polygon that covers the vias and overlaps the power regulator SMD pad.
+    Name the polygon with the same name as the power net.  Make sure polygon
+    thermals are off or else the pad and polygon will not join.
+
+
+ROUTING SENSITIVE SIGNALS
+==============================================
+1. Enable all restriction layers and run PCB_To_DSN.ulp to file restrict.dsn.
+2. Remove restriction polygons for sensitive areas and save the file as unrestrict.dsn.
+3. Open unrestrict.dsn with Electra and route it.  Save the routes in sensitive.rte.
+4. Open restrict.dsn with Electra and import routes from sensitive.rte.
+5. Route the remaining signals.
+6. Unprotect all wires and export the routes as a script.
+
+
+CREATING RECTANGULAR Plated SLOTS
+==============================================
+1. Place cutouts for the device pins in the library footprint.  Place a standard
+   circular pad inside the cutout to serve as the actual connection point.
+2. Place the footprint on the board.
+3. Draw a polygon around the cutout in each wiring and power/gnd plane.  Name
+   the polygon with the name of the net connected to the pad inside the cutout.
+4. For connections to power/gnd planes, draw small, unconnected, unamed wires around the
+   polygon in that plane.  The spaces between the wires will allow the plane to
+   connect to the polygon, but the wires will create a thermal relief.
+
+
+RESIZING VIA DRILLS
+==============================================
+Electra routed the board with 24/12 vias but we needed 24/10 vias.  Didn't want
+to re-route the board just to change the drill size.  The vias were resized by:
+   1. Turn off all layers except the via layer.
+   2. Select all the vias using the Group tool.
+   3. Click on the Change button and set the drill size to 10.
+   4. Right-click on one of the selected vias to change all the vias to 10 mils.
+
+
+RESIZING WIRE WIDTHS
+==============================================
+Manually routed some wires with a width of 6 mils instead of 5.  The wires
+were changed to 5 mil width by:
+   1. Turn off all layers except the wiring layers (1 and 16 in this case).
+   2. Select all the 6 mil wires using the Group tool.
+   3. Click on the Change button and set the width to 5.
+   4. Right-click on one of the selected wires to change all the widths to 5 mils.
+
+
+REPLACING A PART WHILE PRESERVING LAYOUT
+==============================================
+To replace a part with an identical part while leaving the wiring intact:
+   1. On the board, switch to the finest, micron-unit grid and use the INFO
+      command to get the (x y) position and rotation for the part.
+   2. In the schematic, click the DELETE button and shift-click on the
+      part to be replaced.  This will delete the part from the schematic
+      and board but will leave the wiring intact.
+   3. Add the replacement part to the schematic.
+   4. Select the part in the board and rotate it to the previous position.
+      Then use the MOVE command to move it to the previous (x y) location.
+
+
+CREATING AN ARRAY OF BOARDS FOR FABRICATION
+==============================================
+   1. Copy the board (within Windows, not Eagle) to another .brd file such as array.brd.
+   2. Open array.brd without opening any schematic.
+   2. Run copy-silk-screen.ulp on array.brd.  (Use the ULP in xess_ulp since it fixes several problems
+      found in the CADSOFT-supplied ULP.)  This copies silkscreen layers like 21,22,25,26,27,28,51,52 to
+      layers 121,122,125,126,127,128,151,152. 
+   3. Turn off layers 21,22,25,26,27,28,51,52.
+   4. Select entire board and cut-and-paste it.  Do this until you have the desired number of copies.
+   5. Turn on only the dimension layer.  Select all the individual board outlines and delete them.
+   6. Turn on all the layers.  Create a new board outline that encompasses the entire array.
+   7. Save array.brd.  Now create Gerbers from this file for submission.
+
+
+CREATING THE GERBER FILES
+==============================================
+ 1. Click on the CAM button.
+ 2. Set the output device to GERBER_RS274X.
+ 3. Check pos. Coord box to force all coordinates to be positive.
+ 4. Check Optimize box to optimize the output produced.
+ 5. Create sections for each layer:
+      dimension layer (.dim): 20
+      top copper layer (.ly1): 1,17,18
+      ground layer (.ly2): 2,17,18
+      power layer (.ly3): 3,17,18
+      bottom copper layer (.ly4): 16,17,18
+      top silkscreen (.sst): 21,25,200
+      bottom silkscreen (.ssb): 22,26
+      top soldermask (.smt): 29
+      bottom soldermask (.smb): 30
+      top assembly drawing (.adt): 20,21,25,51,200
+      bottom assembly drawing (.adb): 20,22,26,52
+      top solderpaste (.pst): 31
+      bottom solderpaste (.psb): 32
+      top glue (.glt): 35
+      bottom glue (.glb): 36
+      drill data (.drd): 44,45
+ 6. There is no more need to run drill2cfg.ulp anymore.  Just set the drill file type
+   to EXCELLON and it will automatically extract the drill sizes and place them in
+   a .dri file while the drill info goes into a .drd file.
+ 7. Click the 'Process Job' button to create the Gerber files and Excellon drill file.
+ 8. Run count.ulp to find the number of pads, drill holes, vias, etc. for inclusion
+   in the readme.txt file.
+ 9. Run the statistics.ulp to find all sorts of board statistics for the readme.txt file.
+10. Create a readme.txt file giving contact info, the meaning of each file and
+    statistics on the board.
+
+
+CHECKING THE GERBER FILES
+==============================================
+1. Use Pentalogix ViewMate to look at the Gerber files.
+      a. Import the Gerbers using File=>Import or press F2.
+      b. Ctrl-click each file to select it for importing.
+      c. Each file will be imported into a separate layer.  Turn layer visibility
+         ON/OFF in the Layers table.
+      d. Highlight an unused layer and import the drill file (.drd file).
+2. Examine power and ground planes for non-continuity.
+3. Examine soldermask layers for uncovered vias.
+
+
+SUBMITTING FOR DESIGN RULE CHECK
+==============================================
+1. Go to freedfm.com.
+2. Submit the Gerber files in a zip file.
+3. The site will ask for the type of each file: copper, silkscreen, soldermask, etc.
+   It will ask for the polarity of the inner copper layers.  Select 'positive' for
+   inner signal layers and supply layers defined using polygons.
+4. The results of the design rule check are returned via email.
+
+
+SUBMITTING FOR ASSEMBLY
+==============================================
+1. Generate the XY coordinates for the top and bottom-side parts using mount-smd.ulp.
+2. Merge the part identifiers found in the cost-master.xls spreadhseet with the XY
+   data using the command:
+      perl merge_xydata_partids.pl xydata.mnt partids.txt | perl utils\columnize.pl > xydata_partids.mnt
+3. Get the Gerber file solder-paste mask for the array from the PCB fabricator.
+4. Send the coordinates, solder-paste mask and Gerber files to assembler.
+
+
+PRINTING A SCHEMATIC
+==============================================
+1. Fit a schematic page to a single printed page by setting the page limit to 1.
+   Use any number of pages by setting the page limit to 0.
+
+
+MANUAL OPERATIONS
+==============================================
+1. Double-click closes a polygon.  Easier than trying to click close the polygon
+   by clicking on the starting point.
+2. Shift-click adds a via to the current wire being routed.  Middle-click lets you
+   select the layer for routing.
+3. Scroll button increases/decreases zoom.
+4. Click-and-drag with middle mouse button pans screen. (Set middle mouse button as "Middle Button".)
+5. Ctrl-click moves the selected point onto the current grid.
+6. Find out how many unrouted nets by typing 'ratsnest;'.
+7. Look at "Command Syntax" for info on typing commands in Eagle.
+8. Ctrl-click at the start of routing will generate an airwire at that point.
+   This is useful when the optimal airwire does not terminate at the point where
+   you wish to begin routing.
+
+
+DESIGN MODIFICATIONS
+==============================================

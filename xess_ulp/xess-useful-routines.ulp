@@ -1,0 +1,488 @@
+/////////////////////////////////////////////////////////////////////////////////////////
+// Global variables and constants.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+int	top_layer	= 1;		// index of top layer
+int	bot_layer	= 16;		// index of bottom layer
+
+// conversion factors
+real	mil_per_mm	= 39.3700787;	// convert mm to mils
+real	mm_per_mil	= 1/mil_per_mm;	// convert mils to mm
+int	u_per_mic	= 10;		// convert microns to internal units
+int	u_per_mm	= 10000; 	// convert millimeters to internal units
+real	u_per_mil	= mm_per_mil * u_per_mm;	// convert mils to internal units
+real	u_per_inch	= 1000 * u_per_mil;	// convert inches to internal units
+
+string	part_id		= "";		// ID of part for fanout operation
+
+// names of various files
+string	error_file		= "";
+string	script_file		= "";
+string	undo_script_file	= "";
+string	debug_file		= "";
+string	record_file		= "";
+
+// text strings that hold the text for errors, scripts, undo-scripts and debug messages
+string	error_text	= "";
+string	script_text	= "";
+string	undo_text	= "";
+string	debug_text	= "";
+string	record_text	= "";
+string	tmp;				// string for temporary text
+int	num_errors	= 0;		// number of errors found during processing
+int	debug		= 1;		// 0=no debug messages; 1=output debug messages to file
+
+
+//////////////////////////////////////////////////////////////////////////
+// Determine if a string has only 0-9 in it.
+//////////////////////////////////////////////////////////////////////////
+int all_numeric(string s)
+{
+	for(int i=strlen(s)-1; i>=0; i--)
+		if(!isdigit(s[i]))
+			return 0;
+	return 1;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Get the prefix from a part ID
+//////////////////////////////////////////////////////////////////////////
+string get_prefix(string id)
+{
+	string prefix = "";
+	for(int i=0; i<strlen(id); i++)
+	{
+		if(isalpha(id[i]))
+			prefix[i] = id[i];
+		else
+			break;
+	}
+	return prefix;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Simple regular expression comparison.
+//////////////////////////////////////////////////////////////////////////
+int regexcmp(string regex, string s, int match_case)
+{
+	// if case is not important, convert regex and search string to uppercase
+	if(!match_case)
+	{
+		regex = strupr(regex);
+		s = strupr(s);
+	}
+
+	// split regex into fixed strings separated by wildcard (* which matches any string)
+	string regex_part[];
+	int num_regex_parts = strsplit(regex_part,regex,'*');
+
+	int index = 0; // current position within search string
+
+	// try to find all the fixed regex strings (in order) within the search string
+	for(int i=0; i<num_regex_parts; i++)
+	{
+		// An empty fixed string matches anything.
+		// This happens if the regex begins or ends with * or has **.
+		if(regex_part[i]=="")
+			continue;
+
+		// look for the current fixed string within the search string
+		int new_index = strstr(s,regex_part[i],index);
+
+		// no match, so the comparison fails
+		if(new_index < 0)
+			return 0;
+
+		// this is a fixed string right at the beginning of the regex and it
+		// doesn't match the beginning of the search string, so comparison fails
+		if(i==0 && new_index != index)
+			return 0;
+
+		// OK, current fixed string was found in the search string, so move the
+		// index within the search string past the found fixed string and continue.
+		index = new_index + strlen(regex_part[i]);
+	}
+
+	// At this point, all fixed strings were found within the search string.
+	// The comparison will succeed if the last fixed string was empty (so the regex
+	// ended with a wildcard that matches anything) or if the search string index
+	// is at the end of the string (meaning all fixed strings have been found and
+	// the search string has been exhausted).
+	if(regex_part[i-1]=="" || s[index]==0)
+		return 1;
+
+	// All fixed strings were found within the search string, but something at the
+	// end of the search string was left unmatched so the comparison fails.
+	return 0;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Convert coordinates back to library coordinates.
+//////////////////////////////////////////////////////////////////////////
+real prim_untranslate_x(real x, real y, real orgx, real orgy, real angle, int mirror)
+{
+	angle = angle * 2 * PI / 360;
+	return (x-orgx)*cos(angle)*(mirror ? -1:1) + (y-orgy)*sin(angle);
+}
+real prim_untranslate_y(real x, real y, real orgx, real orgy, real angle, int mirror)
+{
+	angle = angle * 2 * PI / 360;
+	return -(x-orgx)*sin(angle)*(mirror ? -1:1) + (y-orgy)*cos(angle);
+}
+real untranslate_x(real x, real y, UL_ELEMENT E)
+{
+	return prim_untranslate_x(x,y,E.x,E.y,E.angle,E.mirror);
+}
+real untranslate_y(real x, real y, UL_ELEMENT E)
+{
+	return prim_untranslate_y(x,y,E.x,E.y,E.angle,E.mirror);
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Convert library pad coordinates back to instantiated coordinates.
+//////////////////////////////////////////////////////////////////////////
+real prim_translate_x(real x, real y, real orgx, real orgy, real angle, int mirror)
+{
+	angle = -angle * 2 * PI / 360 * (mirror ? -1:1);
+	return  (x)*cos(angle)*(mirror ? -1:1) + (y)*sin(angle) + orgx;
+}
+real prim_translate_y(real x, real y, real orgx, real orgy, real angle, int mirror)
+{
+	angle = -angle * 2 * PI / 360 * (mirror ? -1:1);
+	return -(x)*sin(angle)*(mirror ? -1:1) + (y)*cos(angle) + orgy;
+}
+real translate_x(real x, real y, UL_ELEMENT E)
+{
+	return prim_translate_x(x,y,E.x,E.y,E.angle,E.mirror);
+}
+real translate_y(real x, real y, UL_ELEMENT E)
+{
+	return prim_translate_y(x,y,E.x,E.y,E.angle,E.mirror);
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Mirror the top or bottom layer, if needed.
+//////////////////////////////////////////////////////////////////////////
+int mirror_layer(int layer, int mirror)
+{
+	if(mirror)
+	{
+		if(layer == top_layer)
+			return bot_layer;
+		else if(layer == bot_layer)
+			return top_layer;
+	}
+	return layer;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Determine if a point is in a bounding box.
+//////////////////////////////////////////////////////////////////////////
+int in_bbox(real x, real y, real left, real bottom, real right, real top)
+{
+	return ((x>=left) && (x<=right) && (y>=bottom) && (y<=top)) ? 1:0;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Determine if two coordinates touch within a certain width.
+//////////////////////////////////////////////////////////////////////////
+int touches(real x1, real y1, int layer1, real width, real x2, real y2, real layer2)
+{
+	if(layer1 != layer2)
+		return 0;
+	int x1_left   = x1 - width/2;
+	int x1_right  = x1 + width/2;
+	if( x2<x1_left || x2>x1_right)
+		return 0;
+	int y1_bottom = y1 - width/2;
+	int y1_top    = y1 + width/2;
+	if( y2<y1_bottom || y2>y1_top)
+		return 0;
+	return 1;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Determine if a layer is between two other layers (inclusive).
+//////////////////////////////////////////////////////////////////////////
+int between(int layer_start, int layer, int layer_end)
+{
+	if(layer_start<=layer && layer<=layer_end)
+		return 1;
+	if(layer_start>=layer && layer>=layer_end)
+		return 1;
+	return 0;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Create a named wire between two points.
+//////////////////////////////////////////////////////////////////////////
+void draw_wire(int layer, string net, real width, real x0, real y0, real x1, real y1)
+{
+	sprintf(tmp,"CHANGE LAYER %d;\n",layer);
+	script_text += tmp;
+	sprintf(tmp,"WIRE \'%s\' %f (%f %f) (%f %f);\n",
+			net,u2mil(int(width)),
+			u2mil(int(x0)),u2mil(int(y0)),
+			u2mil(int(x1)),u2mil(int(y1)));
+	script_text += tmp;
+
+	// create the undo-script command to remove this wire
+	sprintf(tmp,"RIPUP (%f %f);\n",u2mil(int(x0)),u2mil(int(y0)));
+	undo_text += tmp;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Create a named via at a point.
+//////////////////////////////////////////////////////////////////////////
+void draw_via(int start_layer, int end_layer, string net, real diameter, real drill, real x0, real y0)
+{
+	sprintf(tmp,"CHANGE DRILL %f;\n",u2mil(int(drill)));
+	script_text += tmp;
+	sprintf(tmp,"VIA \'%s\' %f ROUND %d-%d (%f %f);\n",
+			net,u2mil(int(diameter)),
+			start_layer,end_layer,u2mil(int(x0)),u2mil(int(y0)));
+	script_text += tmp;
+
+	// create the undo-script command to remove this via
+	sprintf(tmp,"RIPUP (%f %f);\n",u2mil(int(x0)),u2mil(int(y0)));
+	undo_text += tmp;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Create a short connection to a pin and label it with the net name.
+//////////////////////////////////////////////////////////////////////////
+void draw_connection(UL_PIN pin, string net_name, int class)
+{
+	real connection_length = 0.1; // length of connection stub in inches
+	real label_separation = 0.035; // separation from label to net stub in inches
+	real x2 = -connection_length * u_per_inch;
+	real y2 = 0;
+	real lbl_x = -(connection_length + label_separation) * u_per_inch;
+	real lbl_y = label_separation * u_per_inch;
+
+	real tmpx = prim_translate_x(x2,y2,pin.x,pin.y,pin.angle,0);
+	real tmpy = prim_translate_y(x2,y2,pin.x,pin.y,pin.angle,0);
+	x2 = tmpx;
+	y2 = tmpy;
+
+	tmpx = prim_translate_x(lbl_x,lbl_y,pin.x,pin.y,pin.angle,0);
+	tmpy = prim_translate_y(lbl_x,lbl_y,pin.x,pin.y,pin.angle,0);
+	lbl_x = tmpx;
+	lbl_y = tmpy;
+
+	int num_right_clicks = (int( (pin.angle+45+360)/90.0 ) - 2) % 4;
+
+	sprintf(tmp,"CLASS %d;\n",class);
+	script_text += tmp;
+	sprintf(tmp,"NET \'%s\' (%f %f) (%f %f);\n", net_name, u2mil(pin.x), u2mil(pin.y), u2mil(int(x2)), u2mil(int(y2)));
+	script_text += tmp;
+	sprintf(tmp,"LABEL (%f %f)",u2mil(int(lbl_x)),u2mil(int(lbl_y)));
+	script_text += tmp;
+	for(int i=0; i<num_right_clicks; i++)
+	{
+		sprintf(tmp," (> %f %f)",u2mil(int(lbl_x)),u2mil(int(lbl_y)));
+		script_text += tmp;
+	}
+	sprintf(tmp," (%f %f);\n",u2mil(int(lbl_x)),u2mil(int(lbl_y)));
+	script_text += tmp;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Report errors and abort.
+//////////////////////////////////////////////////////////////////////////
+void report_errors(string errs)
+{
+	if(num_errors == 0 && errs == "")
+		return;
+
+	// report errors in global string if the local error string argument is empty
+	if(errs == "")
+		errs = error_text;
+
+	// store errors in a file
+	if(error_file == "")
+		error_file = get_project_path() + "-" + get_ulp_name() + ".err";
+	output(error_file)
+	{
+		printf("%s",errs);
+	}
+
+	// if multiple error messages, then display errors in a dialog box
+	string lines[];
+	if(strsplit(lines,errs,'\n') > 1)
+	{
+		int result = dlgDialog("Errors") {
+			dlgVBoxLayout
+			{
+				dlgTextView(errs);	
+				dlgPushButton("+OK") dlgAccept();
+			}
+		};
+	}
+	// otherwise, display a single error message in a dialog box
+	else
+		dlgMessageBox(errs, "OK");
+
+	exit (0);
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Output text to files and run script.
+//////////////////////////////////////////////////////////////////////////
+void finish_up()
+{
+	if(num_errors == 0)
+	{
+		error_file = get_project_path() + part_id + "-" + get_ulp_name() + ".err";
+		output(error_file);
+
+		if(debug)
+		{
+			debug_file = get_project_path() + part_id + "-" + get_ulp_name() + ".dbg";
+			output(debug_file);
+			output(debug_file)
+			{
+				printf("%s",debug_text);
+			}
+		}
+
+		if(record_text != "")
+		{
+			record_file = get_project_path() + part_id + "-" + get_ulp_name() + ".record";
+			output(record_file);
+			output(record_file)
+			{
+				printf("%s",record_text);
+			}
+		}
+
+		if(undo_text != "")
+		{
+			undo_script_file = get_project_path() + part_id + "-undo-" + get_ulp_name() + ".scr";
+			output(undo_script_file);
+			output(undo_script_file)
+			{
+				printf("%s",undo_text);
+			}
+		}
+
+		if(script_text != "")
+		{
+			script_file = get_project_path() + part_id + "-" + get_ulp_name() + ".scr";
+			output(script_file);
+			output(script_file)
+			{
+				printf("%s",script_text);
+			}
+			exit("SCRIPT '" + script_file + "';\n");
+		}
+
+		exit(0);
+	}
+	else
+		report_errors("");
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Read a NetScript containing a netlist and return the list of pin
+// connections as a string.
+//////////////////////////////////////////////////////////////////////////
+string read_netlist(string netlist_file)
+{
+	string connections = "";
+
+	string lines[];
+	int n_lines = fileread(lines, netlist_file);
+	if(n_lines == 0)
+	{
+		sprintf(tmp,"unable to open NetScript file %s!",netlist_file);
+		report_errors(tmp);
+	}
+
+	int in_signal = 0; // non-zero if a SIGNAL keyword has been seen and pin connections are being processed
+	string net_name = "UNINITIALIZED_NET"; // name of current net that is being processed
+	string class = "0"; // net class
+	for(int n=0; lines[n]; n++)  // process until a "zero" line is found (this is the end of the lines)
+	{
+		// skip comment lines
+		if(lines[n][0] == '#')
+			continue;
+
+		lines[n] = strupr(lines[n]); // uppercase the line
+
+		// process signal lines to find pins of parts that are connected to nets
+		if(strstr(lines[n], "SIGNAL") == 0 || in_signal)
+		{
+			string net_parts[];
+			int signal_cnt = strsplit (net_parts, lines[n], '\''); // split the signal into parts
+
+			string part_name, part_pin;
+			if(!in_signal)
+			{
+				// this is the first in the list of pin connections for a net
+				net_name = net_parts[1]; // this is the net name of the signal
+				if((net_name[0]=='N') && (net_name[1]=='$'))
+					continue; // don't process nets with automatically-assigned names
+				part_name = net_parts[3];
+				part_pin = net_parts[5];
+				in_signal = 1; // now we are inside the list of pin connections for this signal
+			}
+			else
+			{
+				// this is a pin connection inside the list of pin connections on succeeding lines
+				part_name = net_parts[1];
+				part_pin = net_parts[3];
+			}
+
+			// add the pin connection to the string.  Newlines delimit the individual connections
+			if(part_name!="" && part_pin!="")
+				connections += part_name + "." + part_pin + "\t" + net_name + "\t" + class + "\n";
+
+			// this signal is over if the line ends with a ';'
+			if(strchr(lines[n],';') >= 0)
+				in_signal = 0;
+		}
+
+		else if(strstr(lines[n],"CHANGE")==0)
+		{
+			string change_parts[];
+			int change_cnt = strsplit(change_parts,lines[n],' ');
+			for(int c=0; c<change_cnt; c++)
+			{
+				if(change_parts[c] == "CLASS")
+				{
+					for(c++; c<change_cnt; c++)
+					{
+						if(change_parts[c] != "")
+						{
+							int clss = strtol(change_parts[c]);
+							sprintf(class,"%d",clss);
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+	if(debug)
+	{
+		debug_text += connections;
+	}
+	return connections;
+}
+
+

@@ -1,0 +1,154 @@
+#usage "<b>List net names and pins for a part</b>\n"
+       "<p>"
+       "This ULP lists the nets connected to a part and the associated pin numbers."
+       "<p>"
+       "Usage:<p>"
+       "<blockquote>1. Open a schematic.<p>"
+       "2. Enter the part name whose pin <-> net connections need to be listed.<p>"
+       "</blockquote>"
+       "Note:<p>"
+       "<blockquote><p>"
+       "This ULP is tested on EAGLE standard ver 4.11 for Windows.<p></blockquote>"
+       "<p>"
+       "<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+#include "useful-routines.ulp"
+
+if(!schematic)
+{
+	dlgMessageBox("Start this ULP from a schematic!", "OK");
+	exit (0);
+}
+
+string part_id;
+int output_format = 0;
+int result = dlgDialog("List Nets Connected to Part Pins") {
+		dlgHBoxLayout
+		{
+			dlgLabel("Part: ");
+			dlgStringEdit(part_id);	// get the part identifier for which the nets will be listed
+		}
+		dlgHBoxLayout
+		{
+			dlgGroup("Output Format")
+			{
+				dlgRadioButton("&UCF", output_format);
+				dlgRadioButton("&CSV", output_format);
+			}
+		}
+		dlgHBoxLayout
+		{
+			dlgStretch(1);
+			dlgPushButton("+OK")    dlgAccept();
+			dlgPushButton("Cancel") dlgReject();
+		}
+               };
+if(result == 0)
+	exit (0);
+part_id = strupr(part_id);
+
+int num_errors = 0;
+string error_text = "";
+string error_file = get_project_path() + part_id + "-" + get_ulp_name() + ".err";
+output(error_file); // clear the file
+string part_nets_file = get_project_path() + part_id + "-" + get_ulp_name() + ".txt";
+output(part_nets_file); // clear the file
+
+int num_nets;
+numeric string net_name[];
+string pins_on_net[];
+schematic(S)
+{
+	num_nets = 0;
+	S.nets(N)
+	{
+		string separator = "";
+		N.pinrefs(PR)
+		{
+			if(PR.part.name != part_id)
+				continue;
+			pins_on_net[num_nets] += separator + PR.pin.contact.name;
+			separator = ",";
+		}
+		if(separator != "")
+			net_name[num_nets++] = N.name;
+	}
+}
+
+int index[];
+sort(num_nets,index,net_name,pins_on_net);
+
+string part_nets = "";
+for(int i=0; i<num_nets; i++)
+{
+	if(output_format == 1) // CSV format
+		part_nets += "\"" + net_name[index[i]] + "\",\"(" + pins_on_net[index[i]] + ")\"\n";
+	else // UCF format
+	{
+		string net_name_parts[];
+		int n = strsplit(net_name_parts,net_name[index[i]],'-');
+		string new_net_name = net_name_parts[0];
+		for(int j=1; j<n; j++)
+			new_net_name += "_" + net_name_parts[j];
+		int l = strlen(new_net_name);
+		if(new_net_name[l-1]=='#')
+		{
+			new_net_name[l-1] = '_';
+			new_net_name += "n";
+		}
+		for(j=l-1; j>0; j--)
+		{
+			if(new_net_name[j]<'0' || new_net_name[j]>'9')
+				break;
+		}
+		if(j<l-1)
+		{
+			new_net_name = strsub(new_net_name,0,j+1) + "<" + strsub(new_net_name,j+1,l-1-j) + ">";
+		}
+		net_name[index[i]] = strlwr(new_net_name);
+		if(strtol(pins_on_net[index[i]]))
+			pins_on_net[index[i]] = "p" + pins_on_net[index[i]];
+		part_nets += "net " + net_name[index[i]] + "\tloc=" + pins_on_net[index[i]] + ";\n";
+	}
+}
+
+
+if(num_errors == 0)
+{
+	result = dlgDialog("Result") {
+		dlgVBoxLayout
+		{
+			dlgTextView(part_nets);	
+		}
+		dlgHBoxLayout
+		{
+			dlgPushButton("+OK")    dlgAccept();
+			dlgPushButton("Cancel") dlgReject();
+		}
+	};
+	if(result == 0)
+		exit (0);
+	output(part_nets_file)
+	{
+		printf("%s",part_nets);
+	}
+
+}
+else // errors, so store them in error file and display them in a dialog
+{
+	output(error_file)
+	{
+		printf("%s",error_text);
+	}
+
+	result = dlgDialog("Errors") {
+		dlgVBoxLayout
+		{
+			dlgTextView(error_text);	
+			dlgPushButton("+OK") dlgAccept();
+		}
+	};
+	exit (0);
+}

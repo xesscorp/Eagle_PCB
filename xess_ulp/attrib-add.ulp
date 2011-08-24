@@ -1,0 +1,290 @@
+#usage "<b>Add attribute to group selected part(s) in a schematic</b><p>"
+       "A number of predefined attributes are defined for use with bom-ex.ulp<p>"
+       "<author>http://www.bobstarr.net</author>";
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// ADD ATTRIBUTE
+//
+// Copyright (C) 2009-2010, Robert E. Starr (http://www.bobstarr.net)
+// 
+// REVISION HISTORY:
+//
+// v1.02 - 03/31/2010   Added BOM control attribute options
+//
+// v1.03 - 04/02/2010   Added logic to toggle "Display" checkbox automatically
+//                      depending on the attribute combo type selected.
+//
+// v1.04 - 04/11/2010   Corrected bug with "Display On/Off" option.
+//
+// v1.05 - 04/14/2010   Added addtional display options.
+//
+//////////////////////////////////////////////////////////////////////////////
+//
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND,
+// EXPRESSED OR IMPLIED. IF YOU DON'T LIKE IT, DON'T USE IT!
+//
+//////////////////////////////////////////////////////////////////////////////
+
+string Version = "1.05";
+
+string fileName;
+
+int fDisplay = 1;
+
+string strCmd;     // script command text
+
+string strAttrName;
+string strAttrValue;
+
+string strAttribs[] = {
+    "PARTNO",      // 0  part number (mfg specific)
+    "BOM",         // 1  BOM options for bom-ex.ulp
+    "DNP",         // 2  do not place (T=TRUE/F=FALSE)
+    "PLACE",       // 3  optional place message text
+    "TOL",         // 4  tolerance (1%, 5%, etc)
+    "TC",          // 5  temp coefficient (caps, NPO, X7R, etc)
+    "VOLT",        // 6  voltage rating (caps, etc)
+    "RATE",        // 7  rating (watts, etc)
+    "COLOR",       // 8  color (for leds, etc)
+    "LABEL",       // 9  label (for buttons, switches, etc)
+    "TYPE",        // 10 type field
+    "SIZE",        // 11 package or other size code (0805, etc)
+    "LOAD",        // 12 load field
+    "OPT"          // 13 generic option text
+};
+
+// some common values for attributes above
+
+string strVal0  = "?";
+string strVal1  = "EXCLUDE:INCLUDE";
+string strVal2  = "T:F";
+string strVal3  = "DO NOT PLACE:HAND PLACE";
+string strVal4  = "1%:5%:10%:20%";
+string strVal5  = "NPO:"
+                  "C0G:"
+                  "X5F:X5P:X5R:X5S:X5T:X5U:X5V:"
+                  "X6F:X6P:X6R:X6S:X6T:X6U:X6V:"
+                  "X7F:X7P:X7R:X7S:X7T:X7U:X7V:"
+                  "Y5F:Y5P:Y5R:Y5S:Y5T:Y5U:Y5V:"
+                  "Y6F:Y6P:Y6R:Y5S:Y6T:Y6U:Y6V:"
+                  "Y7F:Y7P:Y7R:Y7S:Y7T:Y7U:Y7V:"
+                  "Z5F:Z5P:Z5R:Z5S:Z5T:Z5U:Z5V:"
+                  "Z6F:Z6P:Z6R:Z5S:Z6T:Z6U:Z6V:"
+                  "Z7F:Z7P:Z7R:Z7S:Z7T:Z7U:Z7V";
+string strVal6  = "2.5V:3V:4V:6V:6.3V:8V:10V:12.5V:16V:20V:25V:30V:35V:50V:60V:63V:75V:80V:100V:125V";
+string strVal7  = "1/4W:1/2W:1W:2W:3W:4W:5W:10W";
+string strVal8  = "RED:GRN:ORG:YEL:BLU:AMB";
+string strVal9  = "RESET:POWER:ON/OFF:LEVEL:GAIN";
+string strVal10 = "TANT:LYTIC:POLY:MICA";
+string strVal11 = "(0402):(0603):(0805):(1005):(1206):(1210):(1508):(2010):(2012):(2512)";
+string strVal12 = "1A:2A:3A:4A:5A:10A:20A:25A";
+string strVal13 = "?";
+
+string strValues[];
+
+int nSelAttr  = 0;  // combo box selection
+int nSelValue = 0;	// combo box selection
+
+//////////////////////////////////////////////////////////////////////////////
+// Combo Selection Change Notification Handlers
+
+void OnComboChangeValue()
+{
+    strAttrValue = strValues[nSelValue];
+}
+
+void OnComboChangeAttr()
+{
+    strAttrName = strAttribs[nSelAttr];
+
+    switch(nSelAttr)
+    {
+    case 0:
+        strsplit(strValues, strVal0, ':');
+        break;
+    case 1:
+        strsplit(strValues, strVal1, ':');
+        break;
+    case 2:
+        strsplit(strValues, strVal2, ':');
+        break;
+    case 3:
+        strsplit(strValues, strVal3, ':');
+        break;
+    case 4:
+        strsplit(strValues, strVal4, ':');
+        break;
+    case 5:
+        strsplit(strValues, strVal5, ':');
+        break;
+    case 6:
+        strsplit(strValues, strVal6, ':');
+        break;
+    case 7:
+        strsplit(strValues, strVal7, ':');
+        break;
+    case 8:
+        strsplit(strValues, strVal8, ':');
+        break;
+    case 9:
+        strsplit(strValues, strVal9, ':');
+        break;
+    case 10:
+        strsplit(strValues, strVal10, ':');
+        break;
+    case 11:
+        strsplit(strValues, strVal11, ':');
+        break;
+    case 12:
+        strsplit(strValues, strVal12, ':');
+        break;
+    case 13:
+        strsplit(strValues, strVal13, ':');
+        break;
+    }
+
+    strAttrValue = strValues[0];
+
+    // Set the current radio button selection according
+    // to the attribute type the use is adding. 
+
+    switch(nSelAttr)
+    {
+    case 0:             // PARTNO
+    case 1:             // BOM
+        fDisplay = 0;   // Display=off
+        break;
+
+    case 2:             // DNP
+        fDisplay = 2;   // Display=Name
+        break;
+
+    default:
+        fDisplay = 1;   // Display=Value
+        break;
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Get count of items selected
+
+int GetSelCount(UL_SCHEMATIC sch)
+{
+    int cnt = 0;
+
+    sch.parts(P)
+    {
+        if (ingroup(P))
+        {
+            // make sure it has a package and name
+            if (P.device.package && P.name)
+                ++cnt;
+        }
+    }
+
+    return cnt;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Script Entry Point
+
+if (schematic)
+{
+    schematic(SCH)
+    {
+        fileName = filesetext(SCH.name, "_AddAttrib.scr");
+
+        string title = "Add Attribute - v" + Version;
+
+        OnComboChangeAttr();
+    
+        if (GetSelCount(SCH) == 0)
+        {
+             dlgMessageBox("No items selected!");
+             exit(0);
+        }
+
+        int Result = dlgDialog(title)
+        {
+            dlgHBoxLayout
+            {
+                dlgGroup("Attribute")
+                {
+                    dlgGridLayout
+                    {
+                        dlgCell(1,0) dlgLabel("Name");
+                        dlgCell(1,1) dlgStringEdit(strAttrName);
+                        dlgCell(1,2) dlgComboBox(strAttribs, nSelAttr) OnComboChangeAttr();
+
+                        dlgCell(3,0) dlgLabel("Value");
+                        dlgCell(3,1) dlgStringEdit(strAttrValue)
+                        dlgCell(3,2) dlgComboBox(strValues, nSelValue) OnComboChangeValue();
+                    }
+                }
+                dlgVBoxLayout
+                {
+                    dlgGroup("Display")
+                    {
+                        dlgRadioButton("Off", fDisplay);
+                        dlgRadioButton("Value", fDisplay);
+                        dlgRadioButton("Name", fDisplay);
+                    }
+                    dlgStretch(1);
+                }
+            }
+            dlgHBoxLayout
+            {
+                dlgPushButton("OK") dlgAccept();
+                dlgPushButton("-Cancel") dlgReject();
+            }
+        };
+
+        if (!Result)
+            exit(0);
+
+        int cnt = 0;
+
+        strCmd = "";
+
+        SCH.parts(P)
+        {
+            if (ingroup(P))
+            {
+                // make sure it has a package and name
+                if (P.device.package && P.name)
+                {
+                    string disp;
+
+                    if (fDisplay == 0)
+                        disp = "OFF";
+                    else if (fDisplay == 1)
+                        disp = "VALUE";
+                    else
+                        disp = "NAME";
+
+                    string tmp;
+                    sprintf(tmp, "CHANGE DISPLAY %s;\n", disp);
+                    strCmd += tmp;
+                    sprintf(tmp, "ATTRIBUTE %s %s '%s';\n", P.name, strAttrName, strAttrValue);
+                    strCmd += tmp;
+
+                    //dlgMessageBox(strCmd);
+
+                    ++cnt;
+                }
+            }
+        }
+
+        if (!cnt)
+          dlgMessageBox("No items selected!");
+
+        exit(strCmd);
+    }
+}
+else
+{
+    dlgMessageBox("Start this ULP in Schematic!", "OK");
+}
+
+// End-Of-File

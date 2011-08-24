@@ -1,0 +1,31 @@
+=head1 XESS Eagle Stuff
+
+XESS-specific libraries, ULPs, scripts, design rules, CAM files for Eagle.
+
+=over 4
+
+=item * xess_dru
+
+Directory of design rules for various PCB fabricators.
+
+=item * xess_cam
+
+Directory of CAM files for various PCB fabricators.
+
+=item * make_parts
+
+Directory of scripts for generating part libraries from text descriptions of parts.
+
+=item * xess_lbr
+
+Directory of part libraries.
+
+=item * xess_ulp
+
+Directory of Eagle User Language Programs.
+
+=item * design-notes.txt
+
+Notes and reminders about how to do certain operations in Eagle.
+
+=back

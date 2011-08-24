@@ -1,0 +1,1104 @@
+string Version = "2.00";
+
+#usage " \
+<b>Export a Bill Of Materials / Real-Time Pricing / Online Ordering</b> \
+<p> \
+Generates a project's bill Of materials (BOM). \
+<p> \
+In addition, BOMs are genrated that can be imported directly into the Digi-Key and Mouser website ordering systems. \
+Also, <b>quantity-based component pricing can be fetched directly from the \
+Digi-Key website</b> for a quick estimate of circuit cost. \
+<p> \
+<author>Author: support@cadsoft.de<br> \
+Modified by: Dave Vandenbout / XESS Corp. - devb@xess.com</author> \
+<p> \
+Version: 2.00 \
+"
+
+
+//==================================================================================================
+// TODO List:
+//   0. Don't make a career out of this.
+//   1. Extract pricing info from Mouser.
+//   2. Integrate Octopart.
+//==================================================================================================
+
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+// We need these strings in the help text.
+string DigikeyBomWebPage = "https://ordering.digikey.com/registereduser/BOMWizard.aspx";
+string MouserBomWebPage  = "http://www.mouser.com/tools/tools.aspx";
+
+string HelpText = " \
+<h1>How to Generate the Bill Of Materials</h1>  \
+<h2><a name=\"Build_Quantity\">Build Quantity</a></h2> \
+<p>Enter the number of boards to be built in the <b>Build Quantity</b> field. \
+<h2><a name=\"List_Types\">List Types</a></h2> \
+<p> \
+The BOM format is selected by clicking one of the following radio buttons. \
+<ul> \
+<li> \
+<b>Parts:</b> The BOM consists of a list of parts with each part on its own line. \
+</li> \
+<li> \
+<b>Values:</b> The BOM consists of a list of values where all the parts with  \
+the same value are grouped together on one line. \
+</li> \
+<li> \
+<b>Manf:</b> This BOM format is similar to Values with the addition of the  \
+manufacturer's name and their part number. This format is useful for sending to distributors to get quotes. \
+</li> \
+<li> \
+<b>Manf+Distributors:</b> This BOM format is similar to Manf with the  \
+ordering codes for both Digi-Key and Mouser added. \
+</li> \
+<li> \
+<b>Digi-Key Order:</b> This generates a parts list that can be input directly into  \
+<a href=\"" + DigikeyBomWebPage + "\">Digi-Key's BOM Manager</a>. \
+</li> \
+<li> \
+<b>Mouser Order:</b> This generates a parts list that can be input directly into  \
+<a href=\"http://www.mouser.com/tools/tools.aspx\">Mouser's BOM import tool</a>. \
+</li> \
+<li> \
+<b>Part Kit Labels:</b> This generates a list of labels that can be applied  \
+to parts before they are shipped to an assembly house. (This is XESS-specific.) \
+</li> \
+</ul> \
+<h2><a name=\"Output_Formats\">Output Formats</a></h2> \
+<p> \
+You have the following output formats available when you view or save a BOM: \
+<ul> \
+<li> \
+<b>Text:</b> Straight ASCII text with no formatting. \
+</li> \
+<li> \
+<b>HTML:</b> HTML-encoded text for inclusion in documents. \
+</li> \
+<li> \
+<b>CSV:</b> Comma-separated-values for importing into spreadsheets. \
+</li> \
+</ul> \
+<h2>Actions</h2> \
+<p> \
+The buttons along the bottom of the dialog box perform the following actions: \
+<ul> \
+<li> \
+<b>View:</b> Opens a window where you can view the BOM in a format determined by the <a href=\"#List_Types\">List Type</a>  \
+and <a href=\"#Output_Formats\">Output Format</a> radio buttons. \
+</li> \
+<li> \
+<b>Save...:</b> Opens a dialog where you can specify a file to store the BOM. \
+</li> \
+<li> \
+<b>Prices:</b> Fetches and displays quantity-based component pricing from Digi-Key. \
+</li> \
+<li> \
+<b>Order:</b> Opens the appropriate order-entry page and displays the BOM in the required import format. \
+</li> \
+<li> \
+<b>Edit:</b> Opens a dialog where you can edit information from a database you have loaded. \
+</li> \
+<li> \
+<b>Help:</b> Brings up this help screen. \
+</li> \
+<li> \
+<b>Close:</b> Terminates the BOM tool. \
+</li> \
+</ul> \
+<h2>Common BOM Operations</h2> \
+<h3>Preparing the Schematic</h3>  \
+You will need to add the following attributes to the parts in your schematic if you want to use the real-time pricing  \
+or online ordering features:  \
+<ul>  \
+<li>  \
+<b>MANF:</b> This attribute holds the name of the manufacturer for the part.  \
+</li>  \
+<li>  \
+<b>MANF#:</b> This attribute holds the manufacturer's part number.  \
+</li>  \
+<li>  \
+<b>DIGIKEY#:</b> This attribute holds the Digi-Key part number.  \
+</li>  \
+<li>  \
+<b>MOUSER#:</b> This attribute holds the Mouser part number.  \
+</li>  \
+</ul> \
+<p> \
+The bad news is you have to lookup and enter these attributes for all the parts in your schematic  \
+that you want included in the real-time pricing and/or the online ordering.  \
+To assist with this chore, use the <b>attrib-copy</b> ULP to copy the attributes from a single part  \
+across all identical parts.  \
+<p> \
+To save effort, you can also add these attributes directly to the parts in the library.  \
+But this won't work if it's a generic part like a resistor whose resistance value will affect it's part number.  \
+It also won't work for ICs that have multiple package options (for example, SOIC and TSSOP)  \
+since those also affect the part number.  \
+<p> \
+The good news is you don't need to enter all these attributes for every part to use the ordering/pricing features.  \
+For example, parts without a Mouser part number simply aren't included in a Mouser order list.  \
+<h3>Viewing the BOM</h3> \
+<p> \
+Click on the <b>Vie<u>w</u></b> button to get a preview of the BOM output.  \
+Use the <a href=\"#List_Types\">List Type</a>  \
+and <a href=\"#Output_Formats\">Output Format</a> radio buttons to change how the BOM is displayed. \
+<h3>Saving the BOM</h3> \
+<p> \
+Click on the <b><u>S</u>ave</b> button to save the BOM to a file.  \
+Use the <a href=\"#List_Types\">List Type</a>  \
+and <a href=\"#Output_Formats\">Output Format</a> radio buttons to select the format and type of data to store. \
+<h3>Pricing the BOM</h3> \
+<p> \
+Click on the <b>Price</b> button to get current pricing information from Digi-Key.  \
+Pricing will be adjusted based on the quantity you have entered in the <a href=\"#Build_Quantity\">Build Quantity</a> field.  \
+(Pricing from Mouser is not currently supported.) \
+<h3>Ordering Parts</h3> \
+<p> \
+To order parts for your design from Digi-Key or Mouser, select either the  \
+<b>Digikey Order</b> or <b>Mouser Order</b> radio button in the <b>List Type</b> box and  \
+then click on the <b>Order</b> button.  \
+This will open the appropriate order-entry web page in your default browser and  \
+display a dialog window with your BOM in the correct import format.  \
+(You will have to register and login to each site before you can reach the order-entry page.)  \
+Select the parts list in the <b>Parts Order</b> window.  \
+Then right-click on the selection and pick <b>Copy</b> from the pop-up menu that appears.  \
+Go to the order-entry field in your browser and paste the parts list.  \
+Then proceed to complete the order on the particular site you've chosen. \
+<h3>Database Operations</h3> \
+<p> \
+You can pull in additional information about the used parts by loading \
+a database file with the <b><u>L</u>oad</b> button. \
+<p> \
+A database file must consist of lines of text, each of which contains \
+one record consisting of CSV (<u>C</u>omma <u>S</u>eparated <u>V</u>alues) \
+or TSV (<u>T</u>ab <u>S</u>eparated <u>V</u>alues) data. \
+The very first line must contain a \"header\", which defines a unique name for \
+each column, and the first column of every following line must contain \
+a unique (non-empty) key for this record. \
+<p> \
+An example for a valid database file would be: \
+<pre> \
+Key              Manufacturer       Order Code Price \
+74LS00N          Texas Instruments  123-456    0.20 \
+R-EU_0204/5:4k7  Somebody           RES4k7     0.10 \
+</pre> \
+Note that the columns are separated by a <b>tab</b> character (you may also \
+use a semicolon (';') to separate the columns, but then you will have to make sure \
+none of the data items contains a semicolon). \
+The keys for looking up records in the database are built from the \
+parts' values. If a part's device has defined \"value on\" it means that \
+the user needs to specify a particular value for this part, as for \
+example with a resistor. In such a case the key consists of the device \
+name and the user defined value, separated by a colon (':'). If the \
+device has \"value off\", only the device name is used as key (if the \
+user has edited the value of such a part and insisted on changing \
+it, the edited value will be used). \
+<h4>Creating a new database</h4> \
+<p> \
+Click on the <b><u>N</u>ew</b> button to create a new database. \
+You will get a dialog in which you can define the names of the column headers \
+for your new database. The first column always contains the key for database \
+lookups and can't be deleted (you can edit it, though, to give it a different \
+name than the default \"Key\"). This first column will not be visible in the \
+generated list, so you don't really need to worry about it. \
+<h4>Editing the database</h4> \
+<p> \
+If you have loaded a database you can either double click on a line \
+in the list, or select a line and press Enter (or click on the <b>Edit</b> \
+button) to bring up a dialog in which you can edit the database entry \
+for this part. If the database has been modified you will be asked if \
+you want to save it before leaving the program or loading a new database. \
+<h1>Authors</h1> \
+<p> \
+Original Author: <a href=\"mailto:support@cadsoft.de?subject=bom-xs ULP\">support@cadsoft.de</a> \
+<p> \
+Modified by: Dave Vandenbout / XESS Corp. - <a href=\"mailto:devb@xess.com?subject=bom-xs ULP\">devb@xess.com</a> \
+";
+
+if (!schematic) {
+    dlgMessageBox(usage + "<hr><b>ERROR: No schematic!</b><p>\nThis program can only work in the schematic editor.");
+    exit(1);
+}
+
+//XXX
+/*
+TODO: - Query user for missing database entries ("Check" button)
+        - Allow user to define which database columns to actually use
+        - dto. for the internal data?
+        - store and retrieve the setup?
+        - what if this is run in a board?
+*/
+
+int BuildQty = 1;
+int NumParts;
+numeric string Lines[];
+numeric string PartName[], PartValue[], PartPrefix[], PartDevice[], PartPackage[], PartHeadline[], PartDescription[], 
+PartManf[], PartManfNumber[], PartMouserNumber[], PartDigikeyNumber[], PartMouserPrice[], PartDigikeyPrice[];
+int PartValueOn[];
+int Selected;
+
+real TotalDigikeyPrice = -1.0;
+real UnitDigikeyPrice = -1.0;
+
+enum { ltParts, ltValues, ltManf, ltManfDisti, ltDigikey, ltMouser, ltLabels }; // List Types
+enum { ofText, ofHTML, ofCSV }; // Output Formats
+int ListType = 0;
+int OutputFormat = 0;
+
+int disableHeader = 0;
+
+string DatabaseFile;
+string Database[];
+char DatabaseSeparator = '\t';
+string DatabaseFields[];
+int DatabaseModified = 0;
+
+char ValueSeparator = ':';
+
+string StripWhiteSpace(string s)
+{
+    while (s && isspace(s[0]))
+    s = strsub(s, 1);
+    while (s && isspace(s[strlen(s) - 1]))
+    s = strsub(s, 0, strlen(s) - 1);
+    return s;
+}
+
+void CollectPartData(void)
+{
+    NumParts = 0;
+
+    schematic(SCH) {
+        SCH.parts(P) {
+            if (P.device.package) {
+                PartName[NumParts] = P.name;
+                PartValue[NumParts] = P.value;
+                PartPrefix[NumParts] = P.device.prefix;
+                PartDevice[NumParts] = P.device.name;
+                PartPackage[NumParts] = P.device.package.name;
+                PartHeadline[NumParts] = P.device.headline;
+                PartDescription[NumParts] = P.device.description;
+                PartValueOn[NumParts] = P.device.value == "On";
+                PartManf[NumParts] = P.attribute["MANF"];
+                PartManfNumber[NumParts] = P.attribute["MANF#"];
+                PartMouserNumber[NumParts] = P.attribute["MOUSER#"];
+                PartDigikeyNumber[NumParts] = P.attribute["DIGIKEY#"];
+                NumParts++;
+            }
+        }
+    }
+}
+
+string DatabaseHeader(void)
+{
+    string s;
+
+    if (Database[0]) {
+        string a[];
+        int n = strsplit(a, Database[0], DatabaseSeparator);
+        int i;
+        for (i = 1; i < n; i++) {
+            s += "\t" + a[i];
+            DatabaseFields[i - 1] = a[i];
+        }
+        DatabaseFields[i - 1] = "";
+    }
+    return s;
+}
+
+string DatabaseKey(int i)
+{
+    string key = PartValue[i];
+    if (PartValueOn[i])
+    key = PartDevice[i] + ValueSeparator + key;
+    return key;
+}
+
+string DatabaseLookup(string key, int f)
+{
+    return lookup(Database, key, DatabaseFields[f], DatabaseSeparator);
+}
+
+void GeneratePartList(void)
+{
+    int NumLines = 0;
+
+    //XXX column sequence?
+    Lines[NumLines++] = "Part\tValue\tDevice\tPackage\tManufacturer\tPart#\tDescription" + DatabaseHeader();
+    for (int i = 0; i < NumParts; i++) {
+        Lines[NumLines] = PartName[i] + "\t" + PartValue[i] + "\t" + PartDevice[i] + "\t" + PartPackage[i] + "\t" + PartManf[i] + "\t" + PartManfNumber[i] + "\t" + PartHeadline[i];
+        if (Database[0]) {
+            string key = DatabaseKey(i);
+            for (int f = 0; DatabaseFields[f]; f++)
+            Lines[NumLines] += "\t" + DatabaseLookup(key, f);
+            Lines[NumLines] += "\t" + key; // hidden field!
+        }
+        NumLines++;
+    }
+    Lines[NumLines] = "";
+}
+
+void GenerateValueList(void)
+{
+    int NumLines = 0;
+    int Index[];
+
+    //XXX column sequence?
+    Lines[NumLines++] = "Qty\tValue\tDevice\tParts" + DatabaseHeader();
+    sort(NumParts, Index, PartValue, PartDevice, PartName);
+    for (int n1 = 0, n2 = 0; ++n2 <= NumParts; ) {
+        int i1 = Index[n1];
+        if (n2 < NumParts) {
+            int i2 = Index[n2];
+            //XXX value on/off?
+            if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
+            continue;
+        }
+        string Quantity;
+        sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
+        Lines[NumLines] = Quantity + "\t" + PartValue[i1] + "\t" + PartDevice[i1] + "\t";
+        for (;;) {
+            Lines[NumLines] += PartName[i1];
+            if (++n1 < n2) {
+                i1 = Index[n1];
+                Lines[NumLines] += ", ";
+            }
+            else
+            break;
+        }
+        if (Database[0]) {
+            string key = DatabaseKey(i1);
+            for (int f = 0; DatabaseFields[f]; f++)
+            Lines[NumLines] += "\t" + DatabaseLookup(key, f);
+            Lines[NumLines] += "\t" + key; // hidden field!
+        }
+        NumLines++;
+    }
+    Lines[NumLines] = "";
+}
+
+void GenerateManfList(void)
+{
+    int NumLines = 0;
+    int Index[];
+
+    //XXX column sequence?
+    Lines[NumLines++] = "Qty\tManf#\tManf\tDevice\tValue\tDescription" + DatabaseHeader();
+    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartManf, PartManfNumber, PartHeadline);
+    for (int n1 = 0, n2 = 0; ++n2 <= NumParts; ) {
+        int i1 = Index[n1];
+        if (n2 < NumParts) {
+            int i2 = Index[n2];
+            //XXX value on/off?
+            if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
+            continue;
+        }
+        string Quantity;
+        sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
+        Lines[NumLines] = Quantity 
+        + "\t" + PartManfNumber[i1] 
+        + "\t" + PartManf[i1]
+        + "\t" + PartDevice[i1]
+        + "\t" + PartValue[i1]
+        + "\t" + PartHeadline[i1]; 
+        n1 = n2;
+        i1 = Index[n2-1];
+        NumLines++;
+    }
+    Lines[NumLines] = "";
+}
+
+void GenerateManfDistiList(void)
+{
+    int NumLines = 0;
+    int Index[];
+    string TotalDigikeyPriceStr;
+    string UnitDigikeyPriceStr;
+
+    //XXX column sequence?
+    Lines[NumLines++] = "Qty\tDigikey#\tDigikey $\tMouser#\tMouser $\tManf#\tManf\tDevice\tValue\tDescription" + DatabaseHeader();
+    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartManf, PartManfNumber, PartHeadline);
+    for (int n1 = 0, n2 = 0; ++n2 <= NumParts; ) {
+        int i1 = Index[n1];
+        if (n2 < NumParts) {
+            int i2 = Index[n2];
+            //XXX value on/off?
+            if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
+            continue;
+        }
+        string Quantity;
+        sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
+        Lines[NumLines] = Quantity 
+        + "\t" + PartDigikeyNumber[i1]
+        + "\t" + PartDigikeyPrice[i1]
+        + "\t" + PartMouserNumber[i1]                                                 
+        + "\t" + PartMouserPrice[i1]                                                 
+        + "\t" + PartManfNumber[i1] 
+        + "\t" + PartManf[i1]
+        + "\t" + PartDevice[i1]
+        + "\t" + PartValue[i1]
+        + "\t" + PartHeadline[i1];
+        n1 = n2;
+        i1 = Index[n2-1];
+        NumLines++;
+    }
+    if(TotalDigikeyPrice >= 0.0)
+    {
+        sprintf(TotalDigikeyPriceStr,"%11.2f",TotalDigikeyPrice);
+        sprintf(UnitDigikeyPriceStr,"%11.2f",UnitDigikeyPrice);
+        Lines[NumLines++] = "\t" + "***Total Price***" + "\t" + TotalDigikeyPriceStr;
+        Lines[NumLines++] = "\t" + "***Unit Price***" + "\t" + UnitDigikeyPriceStr;
+    }
+    Lines[NumLines] = "";
+}
+
+void GenerateMouserOrderList(void)
+{
+    int NumLines = 0;
+    int Index[];
+
+    //XXX column sequence?
+    Lines[NumLines++] = "Mouser Order List";
+    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartMouserNumber);
+    for (int n1 = 0, n2 = 0; ++n2 <= NumParts; ) {
+        int i1 = Index[n1];
+        if (n2 < NumParts) {
+            int i2 = Index[n2];
+            //XXX value on/off?
+            if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
+            continue;
+        }
+        if(PartMouserNumber[i1]){
+            string Quantity;
+            sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
+            Lines[NumLines] = PartMouserNumber[i1] + "|" + Quantity;
+            NumLines++;
+        }
+        n1 = n2;
+        i1 = Index[n2-1];
+    }
+    Lines[NumLines] = "";
+}
+
+void GenerateDigikeyOrderList(void)
+{
+    int NumLines = 0;
+    int Index[];
+
+    //XXX column sequence?
+    Lines[NumLines++] = "Digikey Order List";
+    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartDigikeyNumber);
+    for (int n1 = 0, n2 = 0; ++n2 <= NumParts; )
+    {
+        int i1 = Index[n1];
+        if (n2 < NumParts)
+        {
+            int i2 = Index[n2];
+            //XXX value on/off?
+            if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
+            continue;
+        }
+        if(PartDigikeyNumber[i1])
+        {
+            string Quantity;
+            sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
+            Lines[NumLines] = Quantity + "," + PartDigikeyNumber[i1];
+            NumLines++;
+        }
+        n1 = n2;
+        i1 = Index[n2-1];
+    }
+    Lines[NumLines] = "";
+}
+
+void GenerateLabels(void)
+{
+    numeric string TempLines[];
+    int NumLines = 0;
+    int Index[];
+
+    //XXX column sequence?
+    sort(NumParts, Index, PartPrefix, PartValue, PartName, PartDevice);
+    for (int n1 = 0, n2 = 0; ++n2 <= NumParts; ) 
+    {
+        int i1 = Index[n1];
+        if (n2 < NumParts)
+        {
+            int i2 = Index[n2];
+            //XXX value on/off?
+            if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])
+            continue;
+        }
+        if(PartManfNumber[i1])
+        {
+            string Quantity;
+            sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
+            string date = t2string(time(),"MM/dd/yyyy");
+            string Desc = "";
+            sprintf(Desc,"%s %s %s", PartValue[i1], PartPackage[i1], PartHeadline[i1]);
+
+            TempLines[NumLines] = "";
+            for (;;)
+            {
+                TempLines[NumLines] += PartName[i1];
+                if (++n1 < n2)
+                {
+                    i1 = Index[n1];
+                    TempLines[NumLines] += " ";
+                }
+                else
+                break;
+            }
+            TempLines[NumLines] += " \\\\" + PartManfNumber[i1] + " \\\\" + Desc + " \\\\Qty: " + Quantity + " \\\\Pckg: 0 \\\\XESS Corp. " + date + " |" ;
+            NumLines++;
+        }
+        n1 = n2;
+        i1 = Index[n2-1];
+    }
+
+    sort(NumLines, Index, TempLines);
+    for(int i=0; i<NumLines; i++)
+    {
+        Lines[i+1] = TempLines[Index[i]];
+    }
+    Lines[0] = "Part Kit Labels";
+    NumLines++;
+    Lines[NumLines] = "";
+}
+
+void GenerateList(void)
+{
+    switch (ListType) {
+    case ltParts:     GeneratePartList();         break;
+    case ltValues:    GenerateValueList();        break;
+    case ltManf:      GenerateManfList();         break;
+    case ltManfDisti: GenerateManfDistiList();    break;
+    case ltMouser:    GenerateMouserOrderList();  break;
+    case ltDigikey:   GenerateDigikeyOrderList(); break;
+    case ltLabels:    GenerateLabels();           break;
+    }
+}
+
+string MakeListHeader(void)
+{
+    string s;
+    schematic(SCH) sprintf(s, "Partlist exported from %s at %s", SCH.name, t2string(time()));
+    return s;
+}
+
+string MakeListText(void)
+{
+    int l, Width[];
+    for (l = 0; Lines[l]; l++) {
+        string a[];
+        for (int n = strsplit(a, Lines[l], '\t'); n--; )
+        Width[n] = max(Width[n], strlen(a[n]));
+    }
+    string List;
+    if(!disableHeader) {
+        List = MakeListHeader() + "\n\n";
+    }
+    int numHeaders;
+    for (l = 1; Lines[l]; l++) {
+        List += Lines[l] + "\n";
+    }
+    return List;
+}
+
+string MakeListHTML(void)
+{
+    string List;
+    if(!disableHeader) {
+        List = "<b>" + MakeListHeader() + "</b>\n<p>\n";
+    }
+    List += "<table>\n";
+    int numHeaders;
+    for (int l = 0; Lines[l]; l++) {
+        List += "<tr>";
+        string a[];
+        int n = strsplit(a, Lines[l], '\t');
+        if (l == 0)
+        numHeaders = n;
+        else
+        n = numHeaders; // for the hidden key!
+        for (int i = 0; i < n; i++) {
+            if (l == 0)
+            a[i] = "<b>" + a[i] + "</b>";
+            List += "<td>" + a[i] + "</td>";
+        }
+        List += "</tr>\n";
+    }
+    List += "</table>\n";
+    return List;
+}
+
+string MakeListCSV(void)
+{
+    string List;
+    if(!disableHeader) {
+        List = MakeListHeader();
+    }
+    int numHeaders;
+    for (int l = 0; Lines[l]; l++) {
+        string a[];
+        int n = strsplit(a, Lines[l], '\t');
+        if (l == 0)
+        numHeaders = n;
+        else
+        n = numHeaders; // for the hidden key!
+        for (int i = 0; i < n; i++) {
+            List += a[i] + ",";
+        }
+        List += "\n";
+    }
+    return List;
+}
+
+string MakeList(void)
+{
+    switch (OutputFormat) {
+    case ofText: return MakeListText(); break;
+    case ofHTML: return MakeListHTML(); break;
+    case ofCSV: return MakeListCSV(); break;
+    }
+    return "";
+}
+
+void ViewList(string title)
+{
+    dlgDialog(title) {
+        string s = MakeList();
+        if (OutputFormat != ofHTML)
+        s = "<pre>" + s + "</pre>";
+        dlgHBoxLayout dlgSpacing(400);
+        dlgHBoxLayout {
+            dlgVBoxLayout dlgSpacing(300);
+            dlgTextView(s);
+        }
+        dlgHBoxLayout {
+            dlgStretch(1);
+            dlgPushButton("-Close") dlgReject();
+        }
+    };
+}
+
+void SaveList(void)
+{
+    string FileName;
+    schematic(SCH) FileName = filesetext(SCH.name, OutputFormat == ofHTML ? ".htm" : (OutputFormat == ofCSV ? ".csv" : ".bom"));
+    FileName = dlgFileSave("Save Bill Of Material", FileName);
+    if (FileName) {
+        string a[];
+        if (!fileglob(a, FileName) || dlgMessageBox("File '" + FileName + "' exists\n\nOverwrite?", "+&Yes", "-&No") == 0) {
+            output(FileName, "wt") {
+                printf("%s", MakeListHeader()); // Only put header in when list is saved to file.
+                printf("%s", MakeList()); // using "%s" to avoid problems if list contains any '%'
+            }
+        }
+    }
+}
+
+
+//===================================================================================================
+
+real Number[];
+
+int ExtractNumbers(string Line)
+{
+    int NumNumbers = 0;
+    string NumberText = "";
+    for(int i=0; i<strlen(Line); i++)
+    {
+        if(isdigit(Line[i]) || (Line[i]=='.') || (Line[i]==','))
+        {
+            if(Line[i] != ',')
+            NumberText += Line[i];
+        }
+        else if(strlen(NumberText)!=0)
+        {
+            Number[NumNumbers++] = strtod(NumberText);
+            NumberText = "";
+        }
+    }
+    return NumNumbers;
+}
+
+string GetDigikeyPrice(string PartNumber, int Quantity)
+{
+    string Html;
+    if(PartNumber == "")
+    return "";
+    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?Detail&name="+PartNumber,40) >= 0)
+    {
+        int StartPos = strstr(Html,"Extended Price");
+        if(StartPos < 0)
+        return "A???";
+        Html = strsub(Html, StartPos+strlen("Extended Price"));
+        int EndPos = strstr(Html,"</table>");
+        if(EndPos < 0)
+        return "B???";
+        Html = strsub(Html,0,EndPos);
+        string Line[];
+        int NumLines = strsplit(Line,Html,'\n');
+        string Price = "";
+        for(int i=0; i<NumLines; i++)
+        {
+            int NumNumbers = ExtractNumbers(Line[i]);
+            switch(NumNumbers)
+            {
+            case 2:
+                if(Quantity >= Number[0])
+                sprintf(Price,"%11.2f",Number[1]/Number[0]);
+                else
+                {
+                    if (Price == "")
+                    sprintf(Price,"%11.2f",Number[1]/Number[0]);
+                    return Price;
+                }
+                break;
+            case 3:
+                if(Quantity >= Number[0])
+                sprintf(Price,"%11.2f",Number[1]);
+                else
+                {
+                    if (Price == "")
+                    sprintf(Price,"%11.2f",Number[1]);
+                    return Price;
+                }
+                break;
+            default:
+                break;
+            }
+        }
+        return Price;
+    }
+    return "C???";
+}
+
+void GetPartPrices(void)
+{
+    int Index[];
+
+    TotalDigikeyPrice = 0.0;
+    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartManf, PartManfNumber);
+    for (int n1 = 0, n2 = 0; ++n2 <= NumParts; ) {
+        int i1 = Index[n1];
+        if (n2 < NumParts) {
+            int i2 = Index[n2];
+            if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
+            continue;
+        }
+        int Quantity = (n2 - n1) * BuildQty;
+        PartDigikeyPrice[i1] = GetDigikeyPrice(PartDigikeyNumber[i1],Quantity);
+        TotalDigikeyPrice += strtod(PartDigikeyPrice[i1]) * Quantity;
+        n1 = n2;
+        i1 = Index[n2-1];
+    }
+    UnitDigikeyPrice = TotalDigikeyPrice / BuildQty;
+    GenerateManfDistiList();
+}
+
+void PlaceOrder(void)
+{
+    int saveOutputFormat = OutputFormat;
+    OutputFormat = ofText;
+    disableHeader = 1;
+    switch (ListType) {
+    case ltMouser:
+        system("rundll32 url.dll,FileProtocolHandler " + MouserBomWebPage);
+        GenerateMouserOrderList();
+        ViewList("Mouser Parts Order");
+        break;
+    case ltDigikey:
+        system("rundll32 url.dll,FileProtocolHandler " + DigikeyBomWebPage);
+        GenerateDigikeyOrderList();
+        ViewList("Digi-Key Parts Order");
+        break;
+    default:
+        dlgMessageBox("You must select either 'DigiKey Order' or 'Mouser Order' in the List Type box.");
+        break;
+    }
+    disableHeader = 0;
+    OutputFormat = saveOutputFormat;
+}
+
+//===================================================================================================
+
+
+int ReadDatabase(string FileName)
+{
+    string data;
+    if (fileread(data, FileName) > 0) {
+        strsplit(Database, data, '\n');
+        DatabaseSeparator = (strchr(Database[0], '\t') > -1) ? '\t' : ';';
+        DatabaseFile = FileName;
+        return 1;
+    }
+    return 0;
+}
+
+// --- Create a new database -------------------------------------------------
+
+string Headers[];
+int NumHeaders;
+int SelectedHeader;
+
+int NewDatabaseHeaderOk(string Name)
+{
+    for (int i = 0; i < NumHeaders; i++) {
+        if (Name == Headers[i]) {
+            dlgMessageBox("Name already defined!");
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void NewDatabaseEdit(string Title, string Name)
+{
+    int NewName = !Name;
+    dlgDialog(Title + " Header") {
+        dlgLabel("&Name:");
+        dlgStringEdit(Name);
+        dlgHBoxLayout {
+            dlgStretch(1);
+            dlgPushButton("+Ok") {
+                Name = StripWhiteSpace(Name);
+                if (!NewName) {
+                    if (Name == Headers[SelectedHeader] || NewDatabaseHeaderOk(Name)) {
+                        Headers[SelectedHeader] = Name;
+                        dlgAccept();
+                    }
+                }
+                else if (Name) {
+                    if (NewDatabaseHeaderOk(Name)) {
+                        SelectedHeader = NumHeaders;
+                        Headers[NumHeaders] = Name;
+                        Headers[++NumHeaders] = "";
+                        dlgAccept();
+                    }
+                }
+                else
+                dlgMessageBox("Name can't be empty!");
+            }
+            dlgPushButton("-Cancel") dlgReject();
+        }
+    };
+}
+
+void NewDatabase(void)
+{
+    DatabaseFile = "";
+    Database[0] = "";
+    GenerateList();
+    dlgRedisplay();
+
+    Headers[0] = "Key";
+    Headers[1] = "";
+    NumHeaders = 1;
+    SelectedHeader = -1;
+    int result = dlgDialog("New Database") {
+        dlgHBoxLayout {
+            dlgVBoxLayout {
+                dlgLabel("&Headers");
+                dlgListBox(Headers, SelectedHeader) NewDatabaseEdit("Edit", Headers[SelectedHeader]);
+            }
+            dlgVBoxLayout {
+                dlgPushButton("&Add") NewDatabaseEdit("New", "");
+                dlgPushButton("&Del") {
+                    if (SelectedHeader > 0) {
+                        for (int i = SelectedHeader; i < NumHeaders - 1; i++)
+                        Headers[i] = Headers[i + 1];
+                        Headers[--NumHeaders] = "";
+                        if (SelectedHeader >= NumHeaders)
+                        SelectedHeader = NumHeaders - 1;
+                    }
+                    else
+                    dlgMessageBox("Can't delete the \"Key\" header!\n\nUse \"Edit\" to change it.");
+                }
+                dlgPushButton("&Edit") NewDatabaseEdit("Edit", Headers[SelectedHeader]);
+            }
+        }
+        dlgHBoxLayout {
+            dlgStretch(1);
+            dlgPushButton("+Ok") {
+                if (NumHeaders > 1)
+                dlgAccept();
+                else
+                dlgMessageBox("Please add at least one header!");
+            }
+            dlgPushButton("-Cancel") dlgReject();
+        }
+    };
+    if (result) {
+        string sep;
+        for (int i = 0; Headers[i]; i++) {
+            Database[0] += sep + Headers[i];
+            sep = "\t";
+        }
+        DatabaseSeparator = '\t';
+        DatabaseModified = 1;
+        GenerateList();
+    }
+}
+
+// ---
+
+void LoadDatabase(void)
+{
+    string FileName = dlgFileOpen("Choose database file", DatabaseFile, "Database files (*.tsv *.csv);;All files (*)");
+    if (FileName) {
+        if (ReadDatabase(FileName)) {
+            GenerateList();
+            DatabaseModified = 0;
+        }
+    }
+}
+
+int SaveDatabase(void)
+{
+    if (!DatabaseFile) {
+        string ext = (DatabaseSeparator == '\t') ? ".tsv" : ".csv";
+        DatabaseFile = dlgFileSave("Save database file", "", "Database files (*" + ext + ");;All files (*)");
+        if (!DatabaseFile)
+        return 0;
+        if (fileext(DatabaseFile) != ext)
+        DatabaseFile += ext;
+    }
+    fileerror();
+    output(DatabaseFile, "wt") {
+        for (int i = 0; Database[i]; i++)
+        printf("%s\n", Database[i]);
+    };
+    return !fileerror();
+}
+
+void EditDatabaseEntry(string Key, int Entry)
+{
+    string Header[];
+    string Data[];
+    int Fields = strsplit(Header, Database[0], DatabaseSeparator);
+    strsplit(Data, Database[Entry], DatabaseSeparator);
+    if (!Data[0])
+    Data[0] = Key;
+    int result = dlgDialog("Edit Database") {
+        dlgGridLayout {
+            for (int f = 0; f < Fields; f++) {
+                dlgCell(f, 0) dlgLabel(Header[f]);
+                dlgCell(f, 1) if (f) { dlgStringEdit(Data[f]); } else { dlgLabel(Data[f]); }
+            }
+        }
+        dlgHBoxLayout {
+            dlgStretch(1);
+            dlgPushButton("+Ok") dlgAccept();
+            dlgPushButton("-Cancel") dlgReject();
+        }
+    };
+    if (result) {
+        for (int f = 0; f < Fields; f++)
+        Data[f] = StripWhiteSpace(Data[f]);
+        Database[Entry] = strjoin(Data, DatabaseSeparator);
+        DatabaseModified = 1;
+        GenerateList();
+    }
+}
+
+void EditDatabase(void)
+{
+    if (Database[0]) {
+        if (Selected) {
+            string a[];
+            int KeyField = strsplit(a, Lines[0], '\t');
+            strsplit(a, Lines[Selected], '\t');
+            string key = a[KeyField];
+            string data;
+            int entry;
+            for (entry = 0; Database[entry]; entry++) {
+                strsplit(a, Database[entry], DatabaseSeparator);
+                if (a[0] == key) {
+                    data = Database[entry];
+                    break;
+                }
+            }
+            EditDatabaseEntry(key, entry);
+        }
+        else
+        dlgMessageBox("Please select a list entry first!");
+    }
+    else
+    dlgMessageBox("Please load a database file first!");
+}
+
+int OkToClose(void)
+{
+    if (DatabaseModified) {
+        switch (dlgMessageBox("Database has been modified\n\nSave?", "+&Yes", "&No", "-Cancel")) {
+        case 0: return SaveDatabase();
+        case 1: break;
+        case 2: return 0;
+        }
+    }
+    return 1;
+}
+
+void DisplayHelp(void)
+{
+    dlgDialog("Bill Of Material - Help") {
+        dlgHBoxLayout dlgSpacing(400);
+        dlgHBoxLayout {
+            dlgVBoxLayout dlgSpacing(300);
+            dlgTextView(HelpText);
+        }
+        dlgHBoxLayout {
+            dlgStretch(1);
+            dlgPushButton("-Close") dlgReject();
+        }
+    };
+}
+
+CollectPartData();
+GenerateList();
+
+dlgDialog("Bill Of Material - v" + Version) {
+    dlgListView("", Lines, Selected) EditDatabase();
+    dlgHBoxLayout {
+        dlgLabel("Database:");
+        dlgLabel(DatabaseFile, 1);
+        dlgPushButton("&Load") if (OkToClose()) LoadDatabase();
+        dlgPushButton("&New")  if (OkToClose()) NewDatabase();
+        dlgStretch(1);
+    }
+    dlgHBoxLayout {
+        dlgLabel("Build Quantity:");
+        dlgIntEdit(BuildQty,1,100000000);
+        dlgStretch(50);
+    }
+    dlgHBoxLayout {
+        dlgGroup("List Type") {
+            dlgRadioButton("&Parts", ListType) GeneratePartList();
+            dlgRadioButton("&Values", ListType) GenerateValueList();
+            dlgRadioButton("&Manf", ListType) GenerateManfList();
+            dlgRadioButton("Manf+Distributors", ListType) GenerateManfDistiList();
+            dlgRadioButton("Digikey Order", ListType) GenerateDigikeyOrderList();
+            dlgRadioButton("Mouser Order", ListType) GenerateMouserOrderList();
+            dlgRadioButton("Part Kit Labels", ListType) GenerateLabels();
+        }
+        dlgGroup("Output Format") {
+            dlgRadioButton("&Text", OutputFormat);
+            dlgRadioButton("&HTML", OutputFormat);
+            dlgRadioButton("&CSV",  OutputFormat);
+        }
+        dlgStretch(50);
+    }
+    dlgHBoxLayout {
+        dlgPushButton("Vie&w") ViewList("BOM Preview");
+        dlgPushButton("&Save...") SaveList();
+        dlgPushButton("Prices") GetPartPrices();
+        dlgPushButton("Order") PlaceOrder();
+        dlgPushButton("+Edit") EditDatabase();
+        dlgPushButton("&Help") DisplayHelp();
+        dlgPushButton("-Close") if (OkToClose()) dlgAccept();
+        dlgStretch(1);
+    }
+};
