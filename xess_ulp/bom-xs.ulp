@@ -729,7 +729,8 @@ string GetDigikeyPrice(string PartNumber, int Quantity)
     string Html;
     if(PartNumber == "")
     return "";
-    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?Detail&name="+PartNumber,40) >= 0)
+//    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?Detail&name="+PartNumber,40) >= 0)
+    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&site=us&keywords="+PartNumber,40) >= 0)
     {
         int StartPos = strstr(Html,"Extended Price");
         if(StartPos < 0)
