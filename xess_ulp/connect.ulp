@@ -1,0 +1,150 @@
+#usage	"<b>Connect Named Net Segments to Pins</b>"
+	"<p>"
+	"This ULP connects pins in the schematic to short segments of named nets."
+	"<p>"
+	"Usage:<p>"
+	"<blockquote>"
+	"1. Open a schematic.<p>"
+	"2. Run this ULP with the file containing the net name and pin connections.<p>"
+	"3. Short connection segments will be created for all the given pins and nets.<p>"
+	"</blockquote>"
+	"Note:<p>"
+	"<blockquote>"
+	"This ULP outputs a '.scr' temporary file in the same directory as the project. "
+	"It does NOT automatically delete it.<p>"
+	"This ULP was tested on EAGLE standard ver 4.15 for Windows.<p>"
+	"</blockquote>"
+	"<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+#include "useful-routines.ulp"
+#include "xess-useful-routines.ulp"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+// Start of the main routine.
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+
+if(!schematic)
+	report_errors("Start this ULP from a board layout!");
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Get the name of the NetScript file containing the net list.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+string netscript_file;
+if(argv[1])
+	netscript_file = argv[1];
+else
+	netscript_file = dlgFileOpen("Select NetScript File", get_project_path(), "*.scr");
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Get pin connections from a netlist contained in a NetScript file.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+string connections[];
+int pin_cnt = strsplit(connections,read_netlist(netscript_file),'\n');
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// initialize the script with global settings
+/////////////////////////////////////////////////////////////////////////////////////////
+
+script_text += "SET SELECT_FACTOR 0;\n";	// so we don't pickup anything by mistake
+script_text += "GRID MIL;\n"; // all script commands use mils as the dimensional unit
+script_text += "SET WIRE_BEND 2;\n"; // so wires will go from (x0 y0) to (x1 y1) without any bends inserted
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Add connections to the schematic:
+//   1. Find all the pins that are already connected to nets.
+//   2. Add connections from the NetScript file to pins that aren't already connected.
+/////////////////////////////////////////////////////////////////////////////////////////
+schematic(SCH)
+{
+	// find all pre-existing net connections to pins
+	int num_net_pins = 0;
+	string pre_existing_net_pins[];
+	SCH.nets(N)
+	{
+		N.pinrefs(P)
+		{
+			if(P.pin.contact)
+				pre_existing_net_pins[num_net_pins++] = P.part.name + "." + P.pin.contact.name; 
+		}
+	}
+
+	SCH.sheets(SH)
+	{
+		sprintf(tmp,"EDIT .S%d;\n",SH.number);
+		script_text += tmp;
+
+		SH.parts(P)
+		{
+			P.instances(I)
+			{
+				// go through the pins of each instance of each part on each sheet of a schematic
+				I.gate.symbol.pins(pin)
+				{
+					// P.name = chip identifier (e.g., "U1")
+					// pin.contact.name = pin number on chip (e.g., "5" or "B13")
+					// pin.x, pin.y = (x,y) location of pin in schematic
+					// pin.angle = orientation of pin (0, 90, 180, 270)
+					
+					// skip any pin that doesn't even have a contact for connecting a net
+					if(!pin.contact)
+					{
+						continue;
+					}
+
+					// skip any pin that is already connected to an existing net
+					string pin_name = P.name + "." + pin.contact.name;
+					if(lookup(pre_existing_net_pins,pin_name,0))
+					{
+						if(debug)
+						{
+							sprintf(tmp,"Net already exists on %s.%s.\n",P.name,pin.contact.name);
+							debug_text += tmp;
+						}
+						continue;
+					}
+
+					// skip any pin that is not in the list of connections to be made
+					string net_name = lookup(connections,pin_name,1);
+					string net_class = lookup(connections,pin_name,2);
+					if(!net_name)
+					{
+						if(debug)
+						{
+							sprintf(tmp,"No connection listed for %s.%s.\n",P.name,pin.contact.name);
+							debug_text += tmp;
+						}
+						continue;
+					}
+
+					// connect this pin to the net
+					draw_connection(pin,net_name,strtol(net_class));
+				}
+			}
+		}
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Finalize the script.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+script_text += "GRID LAST;\n";			// restore grid
+script_text += "SET SELECT_FACTOR 0.02;\n";	// restore default select factor
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Execute the script if no errors were found.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+finish_up();
+

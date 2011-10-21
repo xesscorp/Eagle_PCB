@@ -1,0 +1,496 @@
+#usage "<b>Straighten-out connections to pins</b>\n"
+       "<p>"
+       "This ULP swaps pins in the schematic to remove net crossings."
+       "<p>"
+       "Usage:<p>"
+       "<blockquote>1. Open a schematic.<p>"
+       "2. Enter the part name whose pin <-> net connections need to be unscrambled.<p>"
+       "3. Select Nets option if net connections were made using connect.ulp.  Select Pins option if any net connections were made manually.<p>"
+       "4. An undo script file is placed into the project directory that will re-scramble the pins to their original order.<p>"
+       "</blockquote>"
+       "Note:<p>"
+       "<blockquote>-This ULP outputs several '.scr' temporary files in the same directory as this ULP. It does NOT automatically delete them.<p>"
+       "This ULP is tested on EAGLE standard ver 4.11 for Windows.<p></blockquote>"
+       "<p>"
+       "<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+#include "useful-routines.ulp"
+
+if(!schematic)
+{
+	dlgMessageBox("Start this ULP from a schematic!", "OK");
+	exit (0);
+}
+
+string part_id;
+int unscramble_type = 0;  // 0=nets, 1=pins
+int result = dlgDialog("Unscramble") {
+		dlgHBoxLayout
+		{
+			dlgLabel("Part: ");
+			dlgStringEdit(part_id);	// get the identifier for the part whose pins need unscrambling
+		}
+		dlgHBoxLayout
+		{
+			dlgGroup("Unscramble")
+			{
+			dlgRadioButton("&Nets",unscramble_type);
+			dlgRadioButton("&Pins",unscramble_type);
+			}
+		}
+		dlgHBoxLayout
+		{
+			dlgStretch(1);
+			dlgPushButton("+OK")    dlgAccept();
+			dlgPushButton("Cancel") dlgReject();
+		}
+               };
+if(result == 0)
+	exit (0);
+part_id = strupr(part_id);
+
+int num_errors = 0;
+string error_text = "";
+string error_file = get_project_path() + part_id + "-" + get_ulp_name() + ".err";
+output(error_file); // clear the file
+string report_file = get_project_path() + part_id + "-" + get_ulp_name() + ".rpt";
+output(report_file); // clear the file
+string unscramble_script_file = get_project_path() + part_id + "-" + get_ulp_name() + ".scr";
+output(unscramble_script_file); // clear the file
+string undo_script_file = get_project_path() + part_id + "-undo-" + get_ulp_name() + ".scr";
+output(undo_script_file); // clear the file
+string connect_file = get_project_path() + part_id + "-connect.scr";
+output(connect_file); // clear the file
+string disconnect_file = get_project_path() + part_id + "-disconnect.scr";
+output(disconnect_file); // clear the file
+string connect_ulp = get_ulp_path() + "connect.ulp";
+string disconnect_ulp = get_ulp_path() + "disconnect.ulp";
+
+
+
+
+// arrays starting with "pin_" contain data about the pins on the selected device.
+// arrays starting with "net_" contain data about pins that are not on the selected device but that
+//    are on the same net as a pin of the selected device.
+int num_pins, num_net_pins;	// number of pin pointers in pin_index[] and net pointers in net_ptr[]
+
+// pin info: swaplevel, name, (x,y) location, and net containing the pin
+int pin_swaplevel[];		// pin swaplevel
+int net_pin_swaplevel[];	// swaplevel of a pin on a net
+string pin_gate_name[], pin_part_name[], pin_pin_name[];
+string pin_name[];		// name of a pin
+string net_pin_name[];		// name of a pin on a net
+string pin_net_name[];		// name of net that pin[i] is connected to
+string net_pin_net_name[];	// name of net that a pin on a net is connected to
+int pin_sheet[];		// schematic sheet that a pin is on
+int pin_x[], pin_y[];		// (x,y) location for the pin on the board layout
+int net_pin_x[], net_pin_y[];	// (x,y) location for the pin on a net
+real pin_angle[];		// angle of a pin contact point w.r.t. the centroid of the pins
+real net_pin_angle[];		// angle of a contact point for a pin on a net
+
+real centroid_x = 0.0;		// centroid for the pins on a selected part
+real centroid_y = 0.0;
+
+
+// print the pins
+void print_pins(void)
+{
+	output(report_file)
+	{
+		printf("Pins:\n");
+		for(int p=0; p<num_pins; p++)
+		{
+			printf("\t%s %s swaplevel=%d x=%d y=%d angle=%f\n",pin_name[p],pin_gate_name[p],pin_swaplevel[p],pin_x[p],pin_y[p],pin_angle[p]);
+		}
+		printf("Net pins:\n");
+		for(p=0; p<num_net_pins; p++)
+		{
+			printf("\t%s swaplevel=%d x=%d y=%d angle=%f\n",net_pin_name[p],net_pin_swaplevel[p],net_pin_x[p],net_pin_y[p],net_pin_angle[p]);
+		}
+	}
+}
+
+
+real calc_angle(real x0, real y0, real cx, real cy)
+{
+	real dx, dy, angle;
+	dx = x0 - cx;
+	dy = y0 - cy;
+	if(dx==0.0)
+	{
+		if(dy<0)
+			angle = PI/2;
+		else
+			angle = 3*PI/2;
+	}
+	else if(dx > 0.0)
+	{
+		if(dy >= 0.0)
+			angle = atan(dy / dx);
+		else // dy < 0
+			angle = atan(dy / dx) + 2*PI;
+	}
+	else // dx < 0
+	{
+		if(dy >= 0.0)
+			angle = atan(dy / dx) + PI;
+		else // dy < 0
+			angle = atan(dy / dx) + PI;
+	}
+	return angle;
+}
+
+
+real calc_distance(real x0, real y0, real x1, real y1)
+{
+	real dx, dy;
+	dx = x0 - x1;
+	dy = y0 - y1;
+	return dx*dx + dy*dy;
+}
+
+
+void get_pin_info_from_schematic(string part_id)
+{
+	int LOCK_LAYER = 101;	// place pin-locking wire segments on this layer
+	int active_sheet = -1;	// initialize the active sheet to an impossible value 
+	int num_lock_pts = 0;	// no pin-locking points at the start
+	int lock_x[], lock_y[];	// locations of vertices on pin-locking wire segments
+
+	schematic(S)
+	{
+		// go through all the parts on the schematic and get info on each pin
+		num_pins = 0;
+
+		S.parts(P)
+		{
+			if(P.name != part_id)
+				continue;
+
+			int init_bbox;
+			real bbox_l, bbox_r, bbox_t, bbox_b;
+
+			init_bbox = 1;
+
+			P.instances(I)
+			{
+				// the part instance is not on the currently active sheet, so find the
+				// sheet the part instance is on and get the vertices of the lock wires
+				// on that sheet.
+				if(I.sheet != active_sheet)
+				{
+					num_lock_pts = 0; // clear any existing pin-lock points
+					S.sheets(sh)
+					{
+						if(sh.number == I.sheet)
+						{
+							sh.wires(w)
+							{
+								if(w.layer == LOCK_LAYER)
+								{
+									w.pieces(wp)
+									{
+										lock_x[num_lock_pts]   = wp.x1;
+										lock_y[num_lock_pts++] = wp.y1;
+										lock_x[num_lock_pts]   = wp.x2;
+										lock_y[num_lock_pts++] = wp.y2;
+									}
+								}
+							}
+						}
+					}
+					active_sheet = I.sheet; // part instance sheet is now the active sheet
+				}
+
+				I.gate.symbol.pins(pin)
+				{
+					if(!pin.contact) continue;  // skip pins for things like GND symbols
+					if(I.gate.swaplevel == 0) continue; // skip pins that can't be moved
+
+					// check the gate location and see if it is on a lock point
+					for(int i=0; i<num_lock_pts; i++)
+						if((I.x==lock_x[i]) && (I.y==lock_y[i]))
+							break; // exit the loop early if the gate is on a lock point
+					if(i<num_lock_pts) continue; // skip pin since it is locked and can't be moved
+
+					pin_name[num_pins] = P.name + "-" + pin.contact.name;
+					pin_part_name[num_pins] = P.name;
+					pin_pin_name[num_pins] = pin.contact.name;
+					pin_gate_name[num_pins] = P.name + I.gate.name;
+					pin_swaplevel[num_pins] = I.gate.swaplevel;
+					pin_sheet[num_pins] = I.sheet;
+					pin_x[num_pins] = pin.contact.x;
+					pin_y[num_pins] = pin.contact.y;
+					if(init_bbox)
+					{
+						bbox_l = pin_x[num_pins];
+						bbox_r = bbox_l;
+						bbox_b = pin_y[num_pins];
+						bbox_t = bbox_b;
+						init_bbox = 0;
+					}
+					else
+					{
+						if(pin_x[num_pins] < bbox_l)
+							bbox_l = pin_x[num_pins];
+						if(pin_x[num_pins] > bbox_r)
+							bbox_r = pin_x[num_pins];
+						if(pin_y[num_pins] < bbox_b)
+							bbox_b = pin_y[num_pins];
+						if(pin_y[num_pins] > bbox_t)
+							bbox_t = pin_y[num_pins];
+					}
+					num_pins++;
+				}
+			}
+			centroid_x = (bbox_l + bbox_r) / 2.0;
+			centroid_y = (bbox_b + bbox_t) / 2.0;
+		}
+
+		num_net_pins = 0;
+		S.nets(N) // go thru all the nets looking for those that connect to pins on the selected part
+		{
+			// don't consider power or ground nets when straightening pins
+			if(strstr(N.name,"+")==0) // starts with a "+" like "+5V"
+				continue;
+			if(strstr(N.name,"GND")>=0) // contains "GND" like "AGND"
+				continue;
+
+			int swaplevel = 0;
+			int connected_to_part = 0;
+			N.pinrefs(PR) // go thru all the pins on a net looking for pins on the selected part
+			{
+				string pin_nm = PR.part.name + "-" + PR.pin.contact.name;
+				for(int i=0; i<num_pins; i++)
+				{
+					if(pin_name[i]==pin_nm)
+					{
+						pin_net_name[i] = N.name;
+						connected_to_part++; // increment once for each pin on selected part that is on the net
+						swaplevel = pin_swaplevel[i];
+					}
+				}
+			}
+			if(!connected_to_part)
+				continue;
+
+			// go thru all the pins on the net and find the pin on another part that is closest
+			// to the pin on the selected part
+			real min_distance;
+			int init_min = 0;
+			N.pinrefs(PR)
+			{
+				if(PR.part.name == part_id)
+					continue; // skip pins on the device itself
+				real d = calc_distance(PR.pin.contact.x,PR.pin.contact.y,centroid_x,centroid_y);
+				if(!init_min || (d < min_distance))
+				{
+					min_distance = d;
+					net_pin_x[num_net_pins] = PR.pin.contact.x;
+					net_pin_y[num_net_pins] = PR.pin.contact.y;
+					net_pin_net_name[num_net_pins] = N.name;
+					net_pin_swaplevel[num_net_pins] = swaplevel;
+					init_min = 1;
+				}
+			}
+			if(init_min)
+			{
+				for(int i=1; i<connected_to_part; i++)
+				{
+					net_pin_x[num_net_pins+i] = net_pin_x[num_net_pins];
+					net_pin_y[num_net_pins+i] = net_pin_y[num_net_pins];
+					net_pin_net_name[num_net_pins+i] = net_pin_net_name[num_net_pins];
+					net_pin_swaplevel[num_net_pins+i] = net_pin_swaplevel[num_net_pins];
+				}
+				num_net_pins += connected_to_part;
+			}
+		}
+	}
+}
+
+
+void unscramble_pins(void)
+{
+	// find angles for all pins on the chip w.r.t. centroid
+	for(int i=0; i<num_pins; i++)
+		pin_angle[i] = calc_angle(pin_x[i],pin_y[i],centroid_x,centroid_y);
+
+	// find angles for all the closest net pins w.r.t. the chip centroid
+	for(i=0; i<num_net_pins; i++)
+		net_pin_angle[i] = calc_angle(net_pin_x[i],net_pin_y[i],centroid_x,centroid_y);
+
+//	print_pins();
+
+	// sort the chip pins by their angle w.r.t. the chip centroid
+	int p_indx[];
+	sort(num_pins,p_indx,pin_swaplevel,pin_angle,pin_x,pin_y,pin_name,pin_net_name,pin_gate_name);
+
+	// sort the net pins by their angle w.r.t. the chip centroid
+	int n_indx[];
+	sort(num_net_pins,n_indx,net_pin_swaplevel,net_pin_angle,net_pin_x,net_pin_y,net_pin_name,net_pin_net_name);
+
+	// shift the angle of the net pins until they match as closely as possible to the chip pin angles
+	int p_end;
+	int n_start=0;
+	for(int p_start=0; p_start<num_pins; p_start=p_end)
+	{
+		int swaplevel = pin_swaplevel[p_indx[p_start]];
+		for(p_end=p_start; p_end<num_pins; p_end++)
+			if(pin_swaplevel[p_indx[p_end]] != swaplevel)
+				break;
+		int n_pins = p_end - p_start;
+
+		for(int n_end=n_start; n_end<num_net_pins; n_end++)
+			if(net_pin_swaplevel[n_indx[n_end]] != swaplevel)
+				break;
+		int n_nets = n_end - n_start;
+
+		int best_shift = 0;
+		real min_angle_diff = n_pins * 2 * PI;
+		for(int shift=0; shift<n_pins; shift++)
+		{
+			real total_angle_diff = 0;
+			for(i=0; i<n_nets; i++)
+			{
+				real da = abs(pin_angle[p_indx[p_start+((i+shift)%n_pins)]] - net_pin_angle[n_indx[n_start+i]]);
+				if(da > PI)
+					da = 2*PI - da;
+				total_angle_diff += da;
+			}
+			if(total_angle_diff < min_angle_diff)
+			{
+				min_angle_diff = total_angle_diff;
+				best_shift = shift;
+			}
+		}
+
+		if(unscramble_type == 1) // unscramble pins
+		{
+			// create the script that unscrambles the pins
+			string unscramble, rewind, goto_sheet, rewind_goto_sheet;
+			int current_sheet = -1;
+			for(i=0; i<n_nets; i++)
+			{
+				// get the index of the pin that will be connected to the net
+				int k = p_indx[p_start+((i+best_shift)%n_pins)];
+				// find the pin already connected to the net
+				for(int j=0; j<n_pins; j++)
+					if(pin_net_name[p_indx[p_start+j]] == net_pin_net_name[n_indx[n_start+i]])
+						break;
+				// swap the pins if they are different
+				if(k != p_indx[p_start+j])
+				{
+					goto_sheet = "";
+					rewind_goto_sheet = "";
+					if(pin_sheet[k] != current_sheet)
+					{
+						sprintf(goto_sheet,"EDIT .S%d;\n",pin_sheet[k]);
+						if(current_sheet > 0)
+							sprintf(rewind_goto_sheet,"EDIT .S%d;\n",current_sheet);
+					}
+					current_sheet = pin_sheet[k];
+					unscramble = unscramble + goto_sheet + "GATESWAP " + pin_gate_name[k] + " " + pin_gate_name[p_indx[p_start+j]] + ";\n";
+					rewind = "GATESWAP " + pin_gate_name[p_indx[p_start+j]]+ " " + pin_gate_name[k] + ";\n" + rewind_goto_sheet + rewind;
+					string tmp = pin_net_name[k];
+					pin_net_name[k] = pin_net_name[p_indx[p_start+j]];
+					pin_net_name[p_indx[p_start+j]] = tmp;
+				}
+			}
+			sprintf(rewind_goto_sheet,"EDIT .S%d;\n",current_sheet);
+			rewind = rewind_goto_sheet + rewind; // start rewind on the sheet where the pin unscramble ended
+			output(unscramble_script_file,"at")
+			{
+				printf("%s",unscramble);
+			}
+			output(undo_script_file,"at")
+			{
+				printf("%s",rewind);
+			}
+		}
+
+		if(unscramble_type == 0) // unscramble nets
+		{
+			// disconnect all the pins from their existing nets
+			string disconnect;
+			for(i=0; i<n_pins; i++)
+			{
+				int k = p_indx[p_start+i];
+				if(pin_net_name[k][0] != 0)
+				{
+					// check to see if disconnected net is actually in list of nets slated for reconnection
+					for(int j=0; j<n_nets; j++)
+						if(net_pin_net_name[n_indx[n_start+j]] == pin_net_name[k])
+							break;
+					if(j < n_nets) // net found in list so it will be reconnected
+						disconnect += "Signal '" + pin_net_name[k] + "' '" + pin_part_name[k] + "' '" + pin_pin_name[k] + "' \\\n   ;\n";
+					else // error, net not found in list
+					{
+						error_text += "ERROR: Removing net " + pin_net_name[k] + " that is not in the list of nets slated for reconnection\n";
+						num_errors++;
+					}
+				}
+			}
+			output(disconnect_file,"at")
+			{
+				printf("%s",disconnect);
+			}
+
+			// now reconnect the pins to their new nets
+			string connect;
+			for(i=0; i<n_nets; i++)
+			{
+				// get the index of the pin that will be connected to the net
+				int k = p_indx[p_start+((i+best_shift)%n_pins)];
+				connect += "Signal '" + net_pin_net_name[n_indx[n_start+i]] + "' '" + pin_part_name[k] + "' '" + pin_pin_name[k] + "' \\\n   ;\n";
+			}
+			output(connect_file,"at")
+			{
+				printf("%s",connect);
+			}
+		}
+
+		n_start = n_end; // unscramble pins with the next swaplevel
+	}
+
+	if(unscramble_type == 0) // unscramble nets
+	{
+		output(unscramble_script_file,"at")
+		{
+			printf("RUN '%s' '%s'\n",disconnect_ulp,disconnect_file);
+			printf("RUN '%s' '%s'\n",connect_ulp,connect_file);
+		}
+		output(undo_script_file,"at")
+		{
+			printf("RUN '%s' '%s'\n",disconnect_ulp,connect_file);
+			printf("RUN '%s' '%s'\n",connect_ulp,disconnect_file);
+		}
+	}
+}
+
+
+
+
+get_pin_info_from_schematic(part_id);
+unscramble_pins();
+
+if(num_errors == 0)
+	exit("SCRIPT '" + unscramble_script_file + "';\n");
+
+else // errors, so store them in error file and display them in a dialog
+{
+	output(error_file)
+	{
+		printf("%s",error_text);
+	}
+
+	result = dlgDialog("Errors") {
+		dlgVBoxLayout
+		{
+			dlgTextView(error_text);	
+			dlgPushButton("+OK") dlgAccept();
+		}
+	};
+	exit (0);
+}

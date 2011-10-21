@@ -1,0 +1,54 @@
+#require 4.1105
+
+#usage "en: <b>Export a Bill Of Materials as JSON</b>\n"
+	"<p>"
+	" Saves a project's <i>Bill Of Material</i> as a <i>project</i>.json"
+	" suitable for uploading to http://solderpad.com"
+	" <author>Author: psd@solderpad.com</author>"
+	"</p>";
+
+if (!schematic) {
+	dlgMessageBox(usage + "<hr><b>ERROR: No schematic!</b><p>\nThis program can only work in the schematic editor.");
+	exit(1);
+}
+
+schematic(SCH) {
+
+	string FileName;
+	string json;
+	string sep = "";
+	int    found;
+
+	FileName = filesetext("bom", ".json");
+
+	output(FileName, "wt") {
+		printf("{\n");
+		printf("\t\"items\": [\n");
+		SCH.parts(P) {
+			found = 0;
+			if (P.device.package) {
+				P.attributes(A) {
+					if (A.name == "MANF#") {
+						found = 1;
+						json = sep + "\t\t{\n"
+							+ "\t\t\t\"designator\": \"" + P.name + "\",\n"
+							+ "\t\t\t\"value\": \"" + A.value + "\",\n"
+							+ "\t\t\t\"description\": \"" + P.device.headline + "\"\n"
+				    			+ "\t\t}";
+						break;
+					}
+				}
+				if (found == 0) {
+					json = sep + "\t\t{\n"
+						+ "\t\t\t\"designator\": \"" + P.name + "\",\n"
+						+ "\t\t\t\"value\": \"" + P.value + "\",\n"
+						+ "\t\t\t\"description\": \"" + P.device.headline + "\"\n"
+				    		+ "\t\t}";
+				}
+				sep = ",\n";
+				printf("%s", json);
+			}
+		}
+		printf("\n\t]\n}\n");
+	}
+}

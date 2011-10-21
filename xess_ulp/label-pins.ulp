@@ -1,0 +1,150 @@
+#usage "<b>Label pins</b>\n"
+       "<p>"
+       "This ULP labels pins on the board with net names and connected part pins."
+       "<p>"
+       "Usage:<p>"
+       "<blockquote>1. Open a board layout.<p>"
+       "2. Enter the part name whose pins need to be labeled.<p>"
+       "3. Select the font size and layer.<p>"
+       "4. Click on OK.<p>"
+       "</blockquote>"
+       "Note:<p>"
+       "<blockquote>-This ULP outputs several '.scr' temporary files in the same directory as this ULP. It does NOT automatically delete them.<p>"
+       "This ULP is tested on EAGLE standard ver 4.11 for Windows.<p></blockquote>"
+       "<p>"
+       "<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+#include "useful-routines.ulp"
+
+if(!board)
+{
+	dlgMessageBox("Start this ULP from a board layout!", "OK");
+	exit (0);
+}
+
+string label_part_id, pin_part_id, net_filter;
+int layer = 21;
+int text_size = 50;
+int result = dlgDialog("Label Pins") {
+		dlgHBoxLayout
+		{
+			dlgLabel("Part to label: ");
+			dlgStringEdit(label_part_id);	// get the identifier for the part whose pins will be labeled
+		}
+		dlgHBoxLayout
+		{
+			dlgLabel("Pin numbers of part: ");
+			dlgStringEdit(pin_part_id);	// label the part with the pin numbers of this connected part
+		}
+		dlgHBoxLayout
+		{
+			dlgLabel("Filter nets starting with: ");
+			dlgStringEdit(net_filter);	// don't print net names starting with this string
+		}
+		dlgHBoxLayout
+		{
+			dlgLabel("Layer: ");
+			dlgIntEdit(layer,1,255);
+		}
+		dlgHBoxLayout
+		{
+			dlgLabel("Text Size: ");
+			dlgIntEdit(text_size,10,200);
+		}
+		dlgHBoxLayout
+		{
+			dlgStretch(1);
+			dlgPushButton("+OK")    dlgAccept();
+			dlgPushButton("Cancel") dlgReject();
+		}
+               };
+if(result == 0)
+	exit (0);
+label_part_id = strupr(label_part_id);
+pin_part_id = strupr(pin_part_id);
+net_filter = strupr(net_filter);
+
+int num_errors = 0;
+string error_text = "";
+string error_file = get_project_path() + label_part_id + "-" + get_ulp_name() + ".err";
+output(error_file); // clear the file
+string script_file = get_project_path() + label_part_id + "-" + get_ulp_name() + ".scr";
+output(script_file); // clear the file
+string undo_script_file = get_project_path() + label_part_id + "-undo-" + get_ulp_name() + ".scr";
+output(undo_script_file); // clear the file
+
+string script_text;
+string tmp;
+
+script_text += "GRID MIL;\n";
+sprintf(tmp,"LAYER %d;\n", layer);
+script_text += tmp;
+sprintf(tmp,"CHANGE SIZE %d (0 0);\n", text_size);
+script_text += tmp;
+
+board(B)
+{
+	B.signals(S)
+	{
+		int net_connects_to_part = 0;
+		real label_x, label_y;
+		S.contactrefs(C)
+		{
+			if(C.element.name == label_part_id)
+			{
+				net_connects_to_part = 1;
+				label_x = u2mil(C.contact.x);
+				label_y = u2mil(C.contact.y);
+				break;
+			}
+		}
+		if(!net_connects_to_part)
+			continue;
+		string pin_label = "";
+		if(strstr(S.name,net_filter)!=0) // print the net name if it doesn't start with the net_filter string
+			pin_label = S.name + " ";
+		S.contactrefs(C)
+		{
+			if(C.element.name == pin_part_id)
+			{
+				pin_label += C.contact.name;
+				break;
+			}
+//			pin_label += " (" + C.element.name + " " + C.contact.name + ")";
+//			pin_label += " (" + C.contact.name + ")";
+		}
+		sprintf(tmp,"TEXT '%s' R0 (%f %f);\n", pin_label, label_x, label_y);
+		script_text += tmp;
+	}
+}
+
+script_text += "GRID LAST;\n";
+
+
+if(num_errors == 0)
+{
+	output(script_file)
+	{
+		printf("%s",script_text);
+	}
+	exit("SCRIPT '" + script_file + "';\n");
+}
+
+else // errors, so store them in error file and display them in a dialog
+{
+	output(error_file)
+	{
+		printf("%s",error_text);
+	}
+
+	result = dlgDialog("Errors") {
+		dlgVBoxLayout
+		{
+			dlgTextView(error_text);	
+			dlgPushButton("+OK") dlgAccept();
+		}
+	};
+	exit (0);
+}

@@ -1,0 +1,72 @@
+/*******************************************************************
+ *  This EAGLE User Language Program generates a script
+ *  file that can be used to rename elements in a board. 
+ *  The new names will always start with a numerical extension
+ *  of "1" for each part type.
+ *  Useful after deleting parts from a board or copying from
+ *  another project, it closes "numerical holes".
+ *  The program is very simple (a real "quick and dirty" solution),
+ *  but it works.
+ *
+ *  written on July 16, 1998 by Frank Hübenthal
+ *  <FrankHuebenthal@innosys-gmbh.de>
+ * 
+ *
+ *  USAGE: 1. Run this ULP from a *.brd file
+ *         2. After the ULP has finished, run the NamesFrom1.SCR
+ *            script file (will be found in the directory where
+ *            your *.brd file is).
+ * 
+ *  HINTS: 1. The SCR will only work one time after generation (on
+ *            subsequent runnings there will be errors due to
+ *            existing names or nonexisting parts).
+ *            By the way, a second run would be without sense.
+ *         2. If you add or delete parts, run again ULP and SCR.
+ *
+ *
+ *******************************************************************/
+
+
+
+string GetAlphaPart (string FullName)
+   {
+   // Extracts that part of a name, that contains no numbers
+   int len = strlen ( FullName ) ;
+   int i ;
+   for (i = 0; i < len; i++)
+      {
+      if (isdigit(FullName[i]))
+         break ;
+      }
+   return strsub ( FullName, 0, i );
+   }
+
+
+
+int newnum = 1 ;  // start numbering at 1
+string lastname = "" ; // last processed part type
+string actname = "" ; // actual part type
+
+
+
+output("NAMESFROM1.SCR")
+   {
+   board(B)
+      {
+      B.elements(P) // do this for all parts on the board
+         {
+         actname = GetAlphaPart (P.name) ;
+         if ( actname != lastname ) // new part type, restart numbering at 1
+            newnum = 1 ;
+         printf("NAME %s %s%d\n", P.name, actname, newnum );
+         newnum ++ ;
+         lastname = actname ;
+         }
+    
+      }
+   }
+
+
+
+
+

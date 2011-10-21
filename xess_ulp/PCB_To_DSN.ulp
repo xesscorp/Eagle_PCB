@@ -1,0 +1,2776 @@
+//=====================================
+//
+// Eagle Board 4.1x to DSN format
+//
+string Version = "2.09";
+//
+//=====================================
+
+#usage "<b>Converts a Board to a DSN Design File format</b>\n"
+       "<p>"
+       "Generates a design file for the ELECTRA Autorouter"
+       "<p>"
+       "Usage: run PCB_To_DSN.ulp"
+       "<p>"
+       "Copyright (c) 2003, 2005 KONEKT, all rights reserved"
+       "<p>"
+       "<b>www.konekt.com</b>"
+
+
+enum  {false,true};
+int Units;
+int Result = 0;
+string DefaultName, Filename;
+string Ldirs[] = { "Horiz", "Vert", "Any", "OFF"};
+string Ltypes[] = { "Signal", "PwrGnd", "Mixed"};
+string LCosts[] = { "Default Cost", "free", "low", "medium", "high", "forbidden"};
+string Costs[] = { "Off", "free", "low", "medium", "high", "forbidden"};
+string FanoutDirs[] = { "Inside", "Outside", "Inside/Outside"};
+string LyrName[];
+int    LyrDir[], LyrType[], LyrCost[]; 
+string TopLayer, BotLayer;
+real   Width, ViaSize, DrillSize, ViaGrid, WireGrid, Clr, ClassDrillSize[], ClassWidth[], ClassClr[], minViaOuter;;
+string layers[], nets[], classes[];
+int sel_layer, sel_net, sel_class;
+int preprotect, bestsave;
+real Wire_Wire, Wire_Via, Wire_SMD, Wire_Pin, Wire_Area, Via_Via, Via_SMD, Via_Pin, Via_Area;
+real Pin_To_Turn, SMD_To_Turn, Via_Via_Gap, SMD_Via_Gap;
+
+int memory_pass, fanout_pass, init_pass, opti1_pass, final_pass, opti2_pass, filter_pass, mitre_pass; 
+int fanout_passes, init_passes, opti1_passes, final_passes, opti2_passes, filter_passes; 
+
+int wrong_way_cost, crossing_conflict_cost, via_cost, off_grid_cost, smd_off_center_exit_cost, 
+    smd_long_side_exit_cost, via_wire_squeeze_cost;
+
+int max_crossings, max_bends, max_vias;
+real max_length_fanout, max_wrong_way, dist_sharing;
+
+int dir_fanout, pin_sharing, via_sharing; 
+
+int via_at_smd, via_at_smd_pos;
+
+string fileName = argv[0];
+string bmpfile = filedir(fileName) + "ConnectEDA_logo.bmp";
+
+
+real Db2Unit(int Length)
+//---------------------
+{
+	real Value = 0;
+	switch (Units)
+	{
+		case GRID_UNIT_MM :
+		Value = u2mm(Length);
+		break;
+
+		case GRID_UNIT_MIL :
+		Value = u2mil(Length);
+		break;
+
+		case GRID_UNIT_INCH :
+		Value = u2inch(Length);
+		break;
+
+		case GRID_UNIT_MIC :
+		Value = u2mic(Length);
+		break;
+
+	}
+	return Value;
+}
+
+
+void write_Db2Unit(int Length)
+//----------------------------
+{
+  real Value = Db2Unit(Length);
+	string String;
+	sprintf(String,"%f",Value);
+	printf(String);
+}
+
+int mic2u(real Val)
+//-----------------
+{
+  return Val*10;
+}
+
+int mm2u(real Val)
+//-----------------
+{
+  return Val*10000;
+}
+
+int inch2u(real Val)
+//-----------------
+{
+  return Val*254000;
+}
+
+int mil2u(real Val)
+//-----------------
+{
+  return Val*254;
+}
+
+
+real Str2Unit(string a)
+//---------------------
+{
+  int pos = strrstr(a, "mil");
+  if (pos >= 0)
+  {
+    string t = strsub(a, 0, pos);                
+    real u = strtod(t);
+    return Db2Unit(mil2u(u));
+  }
+
+  pos = strrstr(a, "mm");
+  if (pos >= 0)
+  {
+    string t = strsub(a, 0, pos);                
+    real u = strtod(t);
+    return Db2Unit(mm2u(u));
+  }
+    
+  pos = strrstr(a, "mic");
+  if (pos >= 0)
+  {
+    string t = strsub(a, 0, pos);                
+    real u = strtod(t);
+    return Db2Unit(mic2u(u));
+  }
+
+  pos = strrstr(a, "inch");
+  if (pos >= 0)
+  {
+    string t = strsub(a, 0, pos);                
+    real u = strtod(t);
+    return Db2Unit(inch2u(u));
+  }
+
+  return 0;
+}
+
+
+void write_Int(int Val)
+//---------------------
+{
+	string String;
+	sprintf(String,"%d",Val);
+	printf(String);
+}
+
+void write_Real(real Val)
+//-----------------------
+{
+	string String;
+	sprintf(String,"%f",Val);
+	printf(String);
+}
+
+void write_qStr(string String)
+//----------------------------
+{
+	printf("\"");
+	printf(String);
+	printf("\"");
+}
+
+void write_Str(string String)
+//---------------------------
+{
+	printf(String);
+}
+
+
+
+
+//=================================================================
+
+int NumberPadTypes = 0;
+numeric string PadTypeName[];
+string ViaTypeName[];
+int PadTypeshape[];
+int PadTypeDrill[];
+int PadTypeX[];
+int PadTypeY[];
+int PadTypeE[];
+int PadTypeAngle[];
+int PadTypeLayer[];
+int PadShapeRectangle=99;
+int ViaType = 0;
+
+string NewPadTypeName(int ShapeType)
+//----------------------------------
+{
+	string Name;
+	int i=0;
+	int Highest=-1;
+	if (ShapeType == PAD_SHAPE_SQUARE)
+	{
+		Name = "Square";
+	}
+	else
+	if (ShapeType == PAD_SHAPE_ROUND)
+	{
+		Name = "Round";
+	}
+	else
+	if (ShapeType == PAD_SHAPE_OCTAGON)
+	{
+		Name = "Octagon";
+	}	
+	else
+	if (ShapeType == PadShapeRectangle)
+	{
+		Name = "Rectangle";
+	}
+  else
+	if (ShapeType == PAD_SHAPE_LONG)
+	{
+		Name = "Oblong";
+	}
+
+	for (i = 0; i < NumberPadTypes; i++)
+	{		
+		if (PadTypeshape[i] == ShapeType)
+		{
+			Highest = i;
+		}
+	}
+
+	int Index = 1;
+	if (Highest >= 0)
+	{
+		string IndexString = strsub(PadTypeName[Highest], strlen(Name));
+		Index = strtol(IndexString) + 1;
+	}
+
+	sprintf(Name, "%s%d", Name, Index);
+
+	return(Name);
+}
+
+void PTHPadType(UL_PAD Pad)
+//-------------------------
+{
+	int i=0;
+	int Found=-1;
+
+	for (i=0; (i<NumberPadTypes) && (Found==-1); i++)
+	{
+		if (PadTypeshape[i] == Pad.shape[LAYER_TOP] &&
+			  PadTypeX[i] == Pad.diameter[LAYER_TOP] &&
+        PadTypeE[i] == Pad.elongation &&
+        PadTypeAngle[i] == Pad.angle &&
+		    PadTypeDrill[i] == Pad.drill &&
+			  PadTypeY[i] == 0 &&
+			  PadTypeLayer[i] == 0)
+		{
+			Found = i;
+		}
+	}
+
+	if (Found==-1)
+	{
+		PadTypeName[NumberPadTypes] = NewPadTypeName(Pad.shape[LAYER_TOP]);
+		PadTypeshape[NumberPadTypes] = Pad.shape[LAYER_TOP];
+		PadTypeX[NumberPadTypes] = Pad.diameter[LAYER_TOP];
+    PadTypeE[NumberPadTypes] = Pad.elongation;
+    PadTypeAngle[NumberPadTypes] = Pad.angle;
+		PadTypeDrill[NumberPadTypes] = Pad.drill;
+		PadTypeY[NumberPadTypes] = 0;
+		PadTypeLayer[NumberPadTypes] = 0;
+		NumberPadTypes++;
+	}
+}
+
+
+void SMDPadType(UL_SMD Pad)
+//-------------------------
+{
+	int i=0;
+	int Found=-1;
+  int ShapeType = PadShapeRectangle;
+  
+  if (Pad.roundness == 100)
+    ShapeType = PAD_SHAPE_ROUND;
+
+	for (i=0; (i<NumberPadTypes) && (Found==-1); i++)
+	{
+		if (PadTypeshape[i] == ShapeType &&
+			PadTypeX[i] == Pad.dx &&
+			PadTypeY[i] == Pad.dy &&
+      PadTypeAngle[i] == Pad.angle &&
+			PadTypeLayer[i] == Pad.layer)
+		{
+			Found = i;
+		}
+	}
+
+	if (Found == -1)
+	{
+		PadTypeName[NumberPadTypes] = NewPadTypeName(ShapeType);
+		PadTypeshape[NumberPadTypes] = ShapeType;
+		PadTypeX[NumberPadTypes] = Pad.dx;
+		PadTypeY[NumberPadTypes] = Pad.dy;
+    PadTypeE[NumberPadTypes] = 0;
+    PadTypeAngle[NumberPadTypes] = Pad.angle;
+		PadTypeDrill[NumberPadTypes] = 0;
+		PadTypeLayer[NumberPadTypes] = Pad.layer;
+		NumberPadTypes++;
+	}
+		 
+}
+
+void ViaPadType(UL_VIA Via)
+//-------------------------
+{
+	int i=0;
+	int Found=-1;
+
+	for (i=0; (i<NumberPadTypes) && (Found==-1); i++)
+	{
+		if (PadTypeshape[i] == Via.shape[LAYER_TOP] &&
+			  PadTypeX[i] == Via.diameter[LAYER_TOP] &&
+		    PadTypeDrill[i] == Via.drill &&
+			  PadTypeY[i] == 0 &&
+			  PadTypeLayer[i] == 0)
+		{
+			Found = i;
+		}
+	}
+
+	if (Found==-1)
+	{
+		PadTypeName[NumberPadTypes] = NewPadTypeName(Via.shape[LAYER_TOP]);
+    ViaTypeName[ViaType] = PadTypeName[NumberPadTypes];
+    ViaType++;
+		PadTypeshape[NumberPadTypes] = Via.shape[LAYER_TOP];
+		PadTypeX[NumberPadTypes] = Via.diameter[LAYER_TOP];
+		PadTypeDrill[NumberPadTypes] = Via.drill;
+		PadTypeY[NumberPadTypes] = 0;
+    PadTypeE[NumberPadTypes] = 0;
+    PadTypeAngle[NumberPadTypes] = 0;
+		PadTypeLayer[NumberPadTypes] = 0;
+		NumberPadTypes++;
+	}
+}
+
+
+
+
+string FindPadType(int ShapeType, int XSize, int YSize, int drill, int Layer, int Elongation, int Angle)
+//------------------------------------------------------------------------------------------------------
+{
+	int i=0;
+	int Found=-1;
+
+	for (i=0; (i<NumberPadTypes) && (Found==-1); i++)
+	{
+		if (PadTypeshape[i] == ShapeType &&
+			  PadTypeX[i] == XSize &&
+			  PadTypeY[i] == YSize &&
+        PadTypeAngle[i] == Angle &&
+		    PadTypeDrill[i] == drill &&
+        PadTypeE[i] == Elongation &&
+			  PadTypeLayer[i] == Layer)
+		{
+			Found = i;
+		}
+	}
+
+	return(PadTypeName[Found]);
+}
+
+void FPPadTypes(UL_PACKAGE FP)
+//----------------------------
+{
+	FP.contacts(C)
+	{
+		if (C.pad)
+		{
+			PTHPadType(C.pad);
+		}
+		if (C.smd)
+		{
+			SMDPadType(C.smd);
+		}
+	}
+}
+
+
+string LayerFromId(int Id)
+//------------------------
+{
+  string LayerName;
+
+  if ((Id < 1) || (Id > 16))
+    return "signal";
+
+	board(Board)
+	{
+		Board.layers(Layer)
+		{
+			if (Layer.number == Id)
+      {
+        LayerName = Layer.name;
+        sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+        return LayerName;
+      }
+		}
+	}
+  return "signal";
+}
+
+
+void Padstacks()
+//--------------
+{
+	int i, l;
+  real Side;
+
+  printf("    (padstack ");
+  printf("ViaDefault\n");
+  printf("      (shape (circle signal %f", ViaSize);
+  printf(" 0 0))\n");
+
+  printf("      (shape (circle @sys_drill %f", DrillSize);
+  printf(" 0 0))\n");
+  printf("    )\n");
+
+  for (int cx = 0; cx < 8; cx++)
+  {
+    if (ClassDrillSize[cx] == 0)
+      continue;
+
+    printf("    (padstack ");
+    printf("Via%d\n", cx);
+    printf("      (shape (circle signal %f", ClassDrillSize[cx] + 2*minViaOuter);
+    printf(" 0 0))\n");
+
+    printf("      (shape (circle @sys_drill %f", ClassDrillSize[cx]);
+    printf(" 0 0))\n");
+    printf("    )\n");
+  }
+
+	for (i=0; i<NumberPadTypes; i++)
+	{
+		printf("    (padstack ");
+    printf("\"");
+
+		printf(PadTypeName[i]);
+		printf("\"\n");
+
+  	printf("      (shape ");
+
+		if (PadTypeshape[i]==PAD_SHAPE_ROUND)
+		{
+			printf("(circle ");
+			if (PadTypeLayer[i]==0)
+			{
+				printf("signal");
+			}
+			else
+			{
+        printf(LayerFromId(PadTypeLayer[i]));
+			}
+      printf(" ");
+      write_Db2Unit(PadTypeX[i]);
+      printf(" 0 0))");
+		}
+		else
+		if (PadTypeshape[i]==PAD_SHAPE_OCTAGON)
+		{
+			printf("(circle ");
+			if (PadTypeLayer[i]==0)
+			{
+				printf("signal");
+			}
+			else
+			{
+				printf(LayerFromId(PadTypeLayer[i]));
+			}
+      printf(" ");
+      write_Db2Unit(PadTypeX[i]);
+      printf(" 0 0))");
+		}
+		else
+		if (PadTypeshape[i]==PAD_SHAPE_LONG)
+		{
+			printf("(path ");
+			if (PadTypeLayer[i]==0)
+			{
+				printf("signal");
+			}
+			else
+			{
+				printf(LayerFromId(PadTypeLayer[i]));
+			}
+      printf(" ");
+      
+      l = PadTypeX[i];
+      if (l < PadTypeY[i])
+        l = PadTypeY[i];
+      if (PadTypeAngle[i] == 90 || PadTypeAngle[i] == 270)
+      {
+        write_Db2Unit(l);
+        printf(" ");
+        real tmp = l;        
+        Side = tmp/100 * PadTypeE[i];
+        printf("0 ");
+        write_Db2Unit(Side/2);
+        printf(" 0 ");
+        write_Db2Unit(-Side/2);
+        printf("))");
+      }
+      else
+      {
+        write_Db2Unit(l);
+        printf(" ");
+        real tmp = l;        
+        Side = tmp/100 * PadTypeE[i];
+        write_Db2Unit(-Side/2);
+        printf(" 0 ");
+        write_Db2Unit(Side/2);
+        printf(" 0))");
+      }
+		}
+		else			
+		if (PadTypeshape[i]==PAD_SHAPE_SQUARE)
+		{
+			printf("(rect ");
+			if (PadTypeLayer[i]==0)
+			{
+				printf("signal");
+			}
+			else
+			{
+				printf(LayerFromId(PadTypeLayer[i]));
+			}
+      printf(" ");
+      write_Db2Unit(-(PadTypeX[i]/2));
+      printf(" ");
+      write_Db2Unit(-(PadTypeX[i]/2));
+      printf(" ");
+      write_Db2Unit(PadTypeX[i]/2);
+      printf(" ");
+      write_Db2Unit(PadTypeX[i]/2);
+      printf("))");
+		}
+		else			
+		if (PadTypeshape[i]==PadShapeRectangle)
+		{
+			printf("(rect ");
+			if (PadTypeLayer[i]==0)
+			{
+				printf("signal");
+			}
+			else
+			{
+				printf(LayerFromId(PadTypeLayer[i]));
+			}
+      if (PadTypeAngle[i] == 90 || PadTypeAngle[i] == 270)
+      {
+        printf(" ");
+        write_Db2Unit(-(PadTypeY[i]/2));
+        printf(" ");
+        write_Db2Unit(-(PadTypeX[i]/2));
+        printf(" ");
+        write_Db2Unit(PadTypeY[i]/2);
+        printf(" ");
+        write_Db2Unit(PadTypeX[i]/2);
+        printf("))");
+      }
+      else
+      {
+        printf(" ");
+        write_Db2Unit(-(PadTypeX[i]/2));
+        printf(" ");
+        write_Db2Unit(-(PadTypeY[i]/2));
+        printf(" ");
+        write_Db2Unit(PadTypeX[i]/2);
+        printf(" ");
+        write_Db2Unit(PadTypeY[i]/2);
+        printf("))");
+      }
+		}
+    else
+		{
+			printf("(rect ");
+			if (PadTypeLayer[i]==0)
+			{
+				printf("signal");
+			}
+			else
+			{
+				printf(LayerFromId(PadTypeLayer[i]));
+			}
+      if (PadTypeAngle[i] == 90 || PadTypeAngle[i] == 270)
+      {
+        printf(" ");
+        write_Db2Unit(-(PadTypeY[i]/2));
+        printf(" ");
+        write_Db2Unit(-(PadTypeX[i]/2));
+        printf(" ");
+        write_Db2Unit(PadTypeY[i]/2);
+        printf(" ");
+        write_Db2Unit(PadTypeX[i]/2);
+        printf("))");
+      }
+      else
+      {
+        printf(" ");
+        write_Db2Unit(-(PadTypeX[i]/2));
+        printf(" ");
+        write_Db2Unit(-(PadTypeY[i]/2));
+        printf(" ");
+        write_Db2Unit(PadTypeX[i]/2);
+        printf(" ");
+        write_Db2Unit(PadTypeY[i]/2);
+        printf("))");
+      }
+		}
+
+		printf("\n");
+    printf("    )\n");
+	}
+}
+
+
+char IsKeepoutLayer(int LayerNumber)
+//----------------------------------
+{
+	if (LayerNumber >= 41 &&  LayerNumber <= 43)
+	{
+		return true;
+	}
+	return false;
+}
+
+string KeepoutType(int LayerNumber)
+//---------------------------------
+{
+	if (LayerNumber == 43)
+	{
+		return "via_keepout";
+	}
+	else
+	if (LayerNumber == 41 || LayerNumber == 42)
+	{
+		return "wire_keepout";
+	}
+
+	return "keepout";
+}
+
+
+void LineDesc(UL_WIRE Line)
+//-------------------------
+{	
+	write_Db2Unit(Line.width);
+  printf(" ");
+	write_Db2Unit(Line.x1);
+  printf(" ");
+	write_Db2Unit(Line.y1);
+  printf(" ");
+
+	write_Db2Unit(Line.x2);
+  printf(" ");
+	write_Db2Unit(Line.y2);
+}
+
+void ArcDesc(UL_ARC Arc)
+//-------------------------
+{	
+	write_Db2Unit(Arc.width);
+  printf(" ");
+	write_Db2Unit(Arc.x1);
+  printf(" ");
+	write_Db2Unit(Arc.y1);
+  printf(" ");
+
+	write_Db2Unit(Arc.x2);
+  printf(" ");
+	write_Db2Unit(Arc.y2);
+
+/*
+  int x1, y1, x2, y2;  
+
+  x1 = Arc.x1; 
+  y1 = Arc.y1;
+
+  x2 = Arc.x2;
+  y2 = Arc.y2;
+
+	write_Db2Unit(Arc.width);
+  printf(" ");
+	write_Db2Unit(x1);
+  printf(" ");
+	write_Db2Unit(y1);
+  printf(" ");
+
+	write_Db2Unit(x2);
+  printf(" ");
+	write_Db2Unit(y2);
+  printf(" ");
+
+	write_Db2Unit(Arc.xc);
+  printf(" ");
+	write_Db2Unit(Arc.yc);
+*/
+}
+
+void CircleDesc(UL_CIRCLE Circle)
+//-------------------------------
+{
+	write_Db2Unit(Circle.radius * 2);
+  printf(" ");
+
+	write_Db2Unit(Circle.x);
+  printf(" ");
+	write_Db2Unit(Circle.y);
+}
+
+
+void RectangleDesc(UL_RECTANGLE Rectangle)
+//----------------------------------------
+{
+	write_Db2Unit(Rectangle.x1);
+  printf(" ");
+	write_Db2Unit(Rectangle.y1);
+	printf(" ");
+
+	write_Db2Unit(Rectangle.x2);
+  printf(" ");
+	write_Db2Unit(Rectangle.y2);	
+}
+
+
+void PolygonDesc(UL_POLYGON Polygon)
+//----------------------------------
+{
+  printf(" ");
+  write_Db2Unit(Polygon.width);
+	Polygon.wires(Wire)
+	{
+    printf(" ");
+		write_Db2Unit(Wire.x1);
+		printf(" ");
+    write_Db2Unit(Wire.y1);		
+	}
+}
+
+void PTHPad(UL_PAD Pad)
+//---------------------
+{
+	string Style;
+
+	Style = FindPadType(Pad.shape[LAYER_TOP], Pad.diameter[LAYER_TOP], 0, Pad.drill, 0, Pad.elongation, Pad.angle);
+	printf("\"");
+  printf(Style);
+  printf("\" ");
+}
+
+
+void SMDPad(UL_SMD Pad)
+//---------------------
+{
+	string Style;
+
+  if (Pad.roundness == 100)
+    Style = FindPadType(PAD_SHAPE_ROUND, Pad.dx, Pad.dy, 0, Pad.layer, 0, Pad.angle);
+  else    
+	  Style = FindPadType(PadShapeRectangle, Pad.dx, Pad.dy, 0, Pad.layer, 0, Pad.angle);
+	printf("\"");
+  printf(Style);
+  printf("\" ");
+}
+
+void FPOutline(UL_PACKAGE FP, UL_LAYER Layer)
+//-------------------------------------------
+{
+  string LayerName;
+
+	if (Layer.number == LAYER_TPLACE || IsKeepoutLayer(Layer.number))
+	{		  
+    LayerName = Layer.name;    
+    board(Board)
+	  {
+		  Board.layers(Layer)
+		  {
+	      if (Layer.number == 1) 
+          LayerName = Layer.name;
+  	  }
+	  }
+
+    sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+
+    FP.wires(Line)
+		{
+			if (Line.layer == Layer.number)
+			{				
+ 				if (IsKeepoutLayer(Layer.number))
+        {
+          printf("      (%s", KeepoutType(Layer.number));
+          LayerName = TopLayer;
+          if (Layer.number == 42)
+            LayerName = BotLayer;
+          sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+        }
+        else 
+          printf("      (outline");
+
+        printf(" (path ");
+        printf("%s ", LayerName);
+        LineDesc(Line);          
+
+        printf("))\n");
+			}
+		}
+    FP.circles(Circle)
+		{
+			if (Circle.layer==Layer.number)
+			{      
+				if (IsKeepoutLayer(Layer.number))
+        {
+          printf("      (%s", KeepoutType(Layer.number));
+          LayerName = TopLayer;
+          if (Layer.number == 42)
+            LayerName = BotLayer;
+          sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+        }
+        else 
+          printf("      (outline");
+
+        printf("(circ ");
+        printf("%s ", LayerName);
+				CircleDesc(Circle);
+        printf("))\n");
+			}
+		}
+		FP.rectangles(Rectangle)
+		{
+			if (Rectangle.layer==Layer.number)
+			{       
+ 				if (IsKeepoutLayer(Layer.number))
+        {
+          printf("      (%s", KeepoutType(Layer.number));
+          LayerName = TopLayer;
+          if (Layer.number == 42)
+            LayerName = BotLayer;
+          sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+        }
+        else 
+          printf("      (outline");
+
+        
+        printf("(rect ");
+        printf("%s ", LayerName);
+			  RectangleDesc(Rectangle);
+				
+        printf("))\n");
+			}
+		}
+		FP.polygons(Polygon)
+		{
+			if (Polygon.layer==Layer.number)
+			{
+ 				if (IsKeepoutLayer(Layer.number))
+        {
+          printf("      (%s", KeepoutType(Layer.number));
+          LayerName = TopLayer;
+          if (Layer.number == 42)
+            LayerName = BotLayer;
+          sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+        }
+        else 
+          printf("      (outline");
+
+        printf("(poly ");
+        printf("%s ", LayerName);
+				PolygonDesc(Polygon);
+        printf("))\n");
+			}
+		}
+	}
+}
+
+
+void Image(UL_PACKAGE FP)
+//-----------------------
+{
+  int hi = 1;
+  string HName;
+
+  printf("    (image ");
+  printf("\"");
+  printf(FP.name);
+  printf("$");
+  printf(FP.library);
+  printf("\"\n");
+
+ 
+  board(Board)
+  {
+    Board.layers(Layer)
+    {
+        FPOutline(FP,Layer);
+    }
+  }
+
+  FP.holes(Hole)
+  {
+    printf("      (keepout (circ signal ");
+
+    write_Db2Unit(Hole.diameter[LAYER_TSTOP]);
+    printf(" ");
+    write_Db2Unit(Hole.x);
+    printf(" ");
+    write_Db2Unit(Hole.y);
+    printf("))\n");
+  }
+
+  FP.contacts(Pad)
+  {
+    printf("      (pin ");
+
+    if (Pad.pad)
+    {
+        PTHPad(Pad.pad);
+    }
+
+		if (Pad.smd)
+		{
+				SMDPad(Pad.smd);
+		}
+
+		write_qStr(Pad.name);
+		printf(" ");
+
+    write_Db2Unit(Pad.x);
+    printf(" ");
+    write_Db2Unit(Pad.y);
+    printf(")\n");
+  }
+
+  printf("    )\n");
+}
+
+
+void GetUsedFPs()
+//---------------
+{
+  int UsedFPCount=0;
+  numeric string UsedFPs[];
+
+	board(Board)
+	{
+		Board.elements(Component)
+		{
+			string FPName=Component.package.name;
+			char Found=false;
+			int i;
+			for (i=0; (i<UsedFPCount) &&!Found; i++)
+			{
+				if (UsedFPs[i] == FPName)
+				{
+					Found = true;
+				}
+			}
+			if (!Found)
+			{
+				UsedFPs[UsedFPCount++]=FPName;
+			}
+		}
+	}
+}
+
+
+void PadTypes(void)
+//------------------
+{
+	board(Board)
+	{
+		Board.libraries(Library)
+		{
+			Library.packages(FP)
+			{
+			  FPPadTypes(FP);
+			}
+		}
+		Board.signals(Net)
+		{
+			Net.vias(Via)
+			{
+				ViaPadType(Via);
+			}
+		}
+	}
+}
+
+
+void Images()
+//----------
+{
+	GetUsedFPs();
+
+	printf("  (library\n");
+	   
+  board(Board)
+	{
+		Board.libraries(Library)
+		{
+			Library.packages(FP)
+			{
+				Image(FP);
+			}
+		}
+	}
+
+  Padstacks();
+
+	printf("  )\n");
+}
+
+void Header()
+//-----------
+{
+	board(Board)
+	{
+		Units = Board.grid.unit;
+
+		printf("(PCB ");
+		printf("\"");
+		printf(Board.name);
+		printf("\"");
+		printf("\n");
+
+		printf("  (resolution ");		
+
+		if (Board.grid.unit == GRID_UNIT_MM)
+		{
+		  printf("mm 10000)");
+		}
+		else
+		if (Board.grid.unit==GRID_UNIT_MIL)
+		{
+		  printf("mil 10000)");
+		}
+		else
+		if (Board.grid.unit==GRID_UNIT_INCH)
+		{
+		  printf("inch 10000)");
+		}
+		else
+		if (Board.grid.unit==GRID_UNIT_MIC)
+		{
+		  printf("um 10)");
+		}
+		printf("\n");
+	}
+}
+
+void FromTo(UL_CONTACTREF Node)
+//-----------------------------
+{
+  printf(" \"");
+	printf(Node.element.name);
+  printf("\"-");
+  printf("\"");
+	printf(Node.contact.name);
+  printf("\"");
+}
+
+
+void Network()
+//------------
+{
+	printf("  (network\n");
+	board(Board)
+	{
+		Board.signals(Net)
+		{
+	    printf("    (net ");
+      printf("\"");
+	    printf(Net.name);
+      printf("\"\n");
+	    printf("      (pins ");
+	    Net.contactrefs(Node)
+	    {
+		    FromTo(Node);
+	    }
+      printf(")\n");
+
+
+      if (Net.class.width != 0)
+      {
+        printf("      (rule (width ");
+        write_Db2Unit(Net.class.width);
+        if (Net.class.clearance)
+        {
+          printf(")(clearance ");
+          write_Db2Unit(Net.class.clearance);
+          printf("))\n");
+        }
+        else 
+          printf("))\n");
+      }
+
+      if (ClassDrillSize[Net.class.number] != 0)
+      {
+        printf("      (circuit (use_via Via%d", Net.class.number);
+        printf("))\n");
+	    }
+      else
+      {
+        printf("      (circuit (use_via ViaDefault");
+        printf("))\n");
+	    }
+
+	    printf("    )\n");
+		}
+	}
+  printf("  )\n");
+}
+
+
+void Wiring()
+//-----------
+{
+  int hi = 1;
+  string Name;
+
+	printf("  (wiring\n");
+	board(Board)
+	{		         
+    Board.signals(Net)
+		{
+      Net.wires(Wire)
+		  {
+        if ((Wire.layer >= 1) && (Wire.layer <= 16))
+        {
+          if (Wire.arc)
+          {
+            //printf("    (wire (qarc ");
+            printf("    (wire (path "); 
+            printf("%s ", LayerFromId(Wire.layer));
+            ArcDesc(Wire.arc);
+          }
+          else
+          {
+            printf("    (wire (path ");
+            printf("%s ", LayerFromId(Wire.layer));          
+            LineDesc(Wire);
+          }
+          printf(") ");
+          printf("(net ");
+          printf("\"");
+	        printf(Net.name);
+          if (preprotect)
+            printf("\") (type protect))\n");
+          else
+            printf("\"))\n"); 
+        }
+		  }
+
+      Net.polygons(Poly)
+      {
+        if ((Poly.layer >= 1) && (Poly.layer <= 16))
+        {
+          printf("    (wire (poly ");
+          printf("%s ", LayerFromId(Poly.layer));          
+          PolygonDesc(Poly);
+
+          printf(") ");
+          printf("(net ");
+          printf("\"");
+	        printf(Net.name);
+          if (preprotect)
+            printf("\") (type protect))\n");
+          else
+            printf("\"))\n"); 
+        }
+      }
+          
+      Net.vias(Via)
+		  {
+        printf("    (via ");
+        
+        write_qStr(FindPadType(Via.shape[LAYER_TOP], Via.diameter[LAYER_TOP], 0, Via.drill, 0, 0, 0));
+        printf(" ");
+
+        write_Db2Unit(Via.x);
+        printf(" ");
+        write_Db2Unit(Via.y);         
+        printf(" (net ");
+	      printf("\"");
+	      printf(Net.name);
+        printf("\"");
+        if (preprotect)
+          printf(") (type protect))\n");
+        else
+          printf("))\n"); 
+		  }	    
+		}
+	}
+  printf("  )\n");
+}
+
+
+
+
+
+void Layers()
+//-----------
+{
+  int IsSignal;
+
+	board(Board)
+	{
+		Board.layers(Layer)
+		{
+			if (Layer.number >= 1 && Layer.number <= 16)
+			{      
+			  printf("    (layer ");
+        printf("\"");
+        printf(Layer.name);
+        printf("\"");
+
+				if (!strchr(Layer.name,'$') && LyrType[Layer.number-1])
+				{
+          printf(" (type power)");
+          printf(" (use_net ");
+          printf(strsub(Layer.name , 1));
+          printf(")");
+				}
+				else
+				{
+          IsSignal = 1;
+          
+		      if ((Layer.number != LAYER_TOP) && (Layer.number != LAYER_BOTTOM) && LyrType[Layer.number-1])
+          {
+            Board.signals(Net)
+		        {     
+              Net.polygons(Poly)
+              {
+                if (Poly.layer == Layer.number)
+                {
+                  if (IsSignal)
+                  {
+                    printf(" (type power)");
+                    printf(" (use_net ");
+                    printf(Net.name);
+                  }
+                  else
+                  {               
+                    printf(" ");
+	                  printf(Net.name);
+                  }
+                  IsSignal = 0;
+                }
+              }      
+		        }
+          }
+
+          if (IsSignal)
+          {
+            if (LyrType[Layer.number-1] == 1)
+              printf(" (type power)");
+            else
+            if (LyrType[Layer.number-1] == 2)
+              printf(" (type mixed)");
+            else
+							printf(" (type signal)");
+          }
+          else
+            printf(")"); 
+				}
+
+        if (LyrDir[Layer.number-1] == 0)
+          printf(" (direction horizontal))\n");
+        else
+        if (LyrDir[Layer.number-1] == 1)
+          printf(" (direction vertical))\n");  
+        else
+        if (LyrDir[Layer.number-1] == 2)
+          printf(" (direction orthogonal))\n");
+        else
+        if (LyrDir[Layer.number-1] == 3)
+          printf(" (direction off))\n");
+      }
+		}
+	}
+}
+
+void Vias(UL_SIGNAL Net)
+//----------------------
+{
+
+	Net.vias(Via)
+	{
+		printf("(via ");
+
+		write_qStr(FindPadType(Via.shape[LAYER_TOP], Via.diameter[LAYER_TOP], 0, Via.drill, 0, 0, 0));
+    printf(" ");
+
+		write_Db2Unit(Via.x);
+    printf(" ");
+		write_Db2Unit(Via.y);
+
+		printf("\n");
+	}
+
+}
+
+
+void CmpInstance(UL_ELEMENT Component)
+//------------------------------------
+{
+  printf("    (component ");
+  printf("\"");
+  printf(Component.package.name);
+  printf("$");
+  printf(Component.package.library);
+  printf("\" ");
+ 
+  printf("(place ");
+  printf("\"");
+  printf(Component.name);
+  printf("\"");
+  printf(" ");
+
+  write_Db2Unit(Component.x);
+  printf(" ");
+  write_Db2Unit(Component.y);
+  printf(" ");
+
+  if (Component.mirror)
+  {
+    printf("Back");
+  }
+  else
+  {
+      printf("Front");
+  }
+
+  printf(" ");
+  write_Real(Component.angle);
+  printf("))\n");   
+
+}
+
+void Placement()
+//--------------
+{
+	board(Board)
+	{
+		printf("  (placement\n");
+		Board.elements(Component)
+		{
+			CmpInstance(Component);
+		}
+    printf("  )\n");
+	}
+}
+
+
+void Colors()
+//-----------
+{  
+  printf("    (colors\n");
+  printf("      (color 0   black  0   0   0)\n");
+  printf("      (set_color background black)\n");
+  printf("    )\n");  
+}
+
+void Structure()
+//--------------
+{
+	board(Board)
+	{
+		Board.layers(Layer)
+		{      
+			if (Layer.number == LAYER_TOP)
+        TopLayer = Layer.name;
+      else
+      if (Layer.number == LAYER_BOTTOM)
+        BotLayer = Layer.name;  
+
+      if ((Layer.number == LAYER_DIMENSION) ||
+          (Layer.number == LAYER_TSTOP) ||
+          (Layer.number == LAYER_BSTOP) ||
+          IsKeepoutLayer(Layer.number))
+			{
+        string LayerName;
+
+        LayerName = Layer.name;
+        if (Layer.number == LAYER_DIMENSION)
+          LayerName = "signal";
+        else
+        if (Layer.number == LAYER_TSTOP)
+          LayerName = TopLayer;
+        else
+          LayerName = BotLayer;
+
+        sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+         
+				Board.wires(Line)
+				{					                    
+          if (Line.layer == Layer.number)
+					{
+				    if (IsKeepoutLayer(Layer.number))
+            {
+              printf("    (%s", KeepoutType(Layer.number));
+              LayerName = TopLayer;
+              if (Layer.number == 42)
+                LayerName = BotLayer;
+              sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+            }
+            else 
+              printf("    (boundary ");
+
+	          printf("(path ");
+            printf("%s ", LayerName);
+						LineDesc(Line);						
+            printf("))\n");
+
+					}
+				}
+
+				Board.circles(Circle)
+				{
+					if (Circle.layer == Layer.number)
+					{						
+            if (IsKeepoutLayer(Layer.number))
+            {
+              printf("    (%s", KeepoutType(Layer.number));
+              LayerName = TopLayer;
+              if (Layer.number == 42)
+                LayerName = BotLayer;
+              sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+            }
+            else 
+              printf("    (boundary ");
+            
+            printf("(circ ");
+            printf("%s ", LayerName);
+						
+            CircleDesc(Circle);
+            printf("))\n");
+					}
+				}
+
+				Board.rectangles(Rectangle)
+				{
+					if (Rectangle.layer == Layer.number)
+					{
+						if (IsKeepoutLayer(Layer.number))
+            {
+              printf("    (%s", KeepoutType(Layer.number));
+              LayerName = TopLayer;
+              if (Layer.number == 42)
+                LayerName = BotLayer;
+              sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+            }
+            else 
+              printf("    (boundary ");
+            
+            
+            printf("(rect ");
+            printf("%s ", LayerName);
+						RectangleDesc(Rectangle);
+            printf("))\n");
+					}
+				}
+
+        Board.polygons(Polygon)
+		    {
+			    if (Polygon.layer==Layer.number)
+			    {
+ 				    if (IsKeepoutLayer(Layer.number))
+            {
+              printf("    (%s", KeepoutType(Layer.number));
+              LayerName = TopLayer;
+              if (Layer.number == 42)
+                LayerName = BotLayer;
+              sprintf(LayerName,"%c%s%c",'"', LayerName, '"');
+            }
+            else 
+              printf("    (boundary ");
+
+            printf("(poly ");
+            printf("%s ", LayerName);
+				    PolygonDesc(Polygon);
+            printf("))\n");
+			    }
+		    }
+			}
+		}
+
+    Board.holes(Hole)
+	  {
+
+		  printf("    (keepout (circ signal ");
+
+		  write_Db2Unit(Hole.diameter[LAYER_TSTOP]);
+      printf(" ");
+		  write_Db2Unit(Hole.x);
+      printf(" ");
+		  write_Db2Unit(Hole.y);
+		  printf("))\n");
+    }  
+
+    printf("    (grid wire ");
+    printf("%f", Board.grid.distance);
+    printf(")\n");
+    printf("    (grid via ");
+    printf("%f", Board.grid.distance);
+    printf(")\n");
+
+    printf("    (via ViaDefault");
+    for (int i = 0; i < ViaType; i++)
+      printf(" %s", ViaTypeName[i]);
+    for (int cx = 0; cx < 8; cx++)
+    {
+      if (ClassDrillSize[cx] == 0)
+        continue;
+      printf(" Via%d", cx);
+    }
+    printf(")\n");
+
+   
+    printf("    (rule (width %f", Width);
+    printf(")(clearance %f", Clr);
+    printf("))\n");
+
+/*
+    if (Via_Via > 0)
+    {
+      printf("    (rule (clearance %f", Via_Via);
+      printf(" (type via_via)))\n");
+    } 
+    if (Via_SMD > 0)
+    {
+      printf("    (rule (clearance %f", Via_SMD);
+      printf(" (type via_smd)))\n");
+    }
+    if (Via_Pin > 0)
+    {
+      printf("    (rule (clearance %f", Via_Pin);
+      printf(" (type via_pin)))\n");
+    }
+    if (Via_Area > 0)
+    {
+      printf("    (rule (clearance %f", Via_Area);
+      printf(" (type via_area)))\n");
+    }
+
+    if (Wire_Wire > 0)
+    {
+      printf("    (rule (clearance %f", Wire_Wire);
+      printf(" (type wire_wire)))\n");
+    } 
+    if (Wire_Via > 0)
+    {
+      printf("    (rule (clearance %f", Wire_Via);
+      printf(" (type wire_via)))\n");
+    }  
+    if (Wire_SMD > 0)
+    {
+      printf("    (rule (clearance %f", Wire_SMD);
+      printf(" (type wire_smd)))\n");
+    }
+    if (Wire_Pin > 0)
+    {
+      printf("    (rule (clearance %f", Wire_Pin);
+      printf(" (type wire_pin)))\n");
+    }
+    if (Wire_Area > 0)
+    {
+      printf("    (rule (clearance %f", Wire_Area);
+      printf(" (type wire_area)))\n");
+    }  
+*/
+
+    printf("    (flip_style rotate_first)\n");
+	}
+}
+
+
+void InitDlg()
+//------------
+{
+  for (int i = 0; i < 16; i++)
+  {
+    LyrDir[i] = 3;
+    LyrType[i] = 0;
+    LyrCost[i] = 0;
+  }
+
+	board(Board)
+	{
+		Board.layers(Layer)
+		{
+			if ((Layer.number >= 1) && (Layer.number <= 16))
+      {
+	      LyrName[Layer.number-1] = Layer.name;
+
+        if (Layer.used)
+        {
+          if (Layer.number & 1) 
+            LyrDir[Layer.number-1] = 0; // odd is HORIZONTAL
+          else
+            LyrDir[Layer.number-1] = 1; // even is VERTICAL
+
+          if (strchr(Layer.name,'$')==0)
+				  {
+            LyrType[Layer.number-1] = 1;
+				  }
+				  else
+				  {
+            int IsSignal = 1;
+          
+		        if ((Layer.number != LAYER_TOP) && (Layer.number != LAYER_BOTTOM))
+            {
+              Board.signals(Net)
+		          {     
+                Net.polygons(Poly)
+                {
+                  if (Poly.layer == Layer.number)
+                  {
+                    if (IsSignal)
+                    {
+                      LyrType[Layer.number-1] = 1;
+                    }
+                    IsSignal = 0;
+                  }
+                }      
+		          }
+            }
+				  }
+        }
+      } 
+		}
+	}
+  
+	board(Board)
+	{
+    Units = Board.grid.unit;
+
+  	int cx = 0;
+		Board.classes(Class)
+		{
+			ClassDrillSize[cx] = Db2Unit(Class.drill);
+      ClassWidth[cx] = Db2Unit(Class.width);
+      ClassClr[cx] = Db2Unit(Class.clearance); 
+      cx++;
+ 		}	    
+
+		WireGrid = Db2Unit(Board.grid.distance);
+		ViaGrid = WireGrid;
+  }
+
+
+  preprotect = bestsave = 1;
+
+  memory_pass = fanout_pass = init_pass = opti1_pass = final_pass = opti2_pass = filter_pass = mitre_pass = 1; 
+  fanout_passes = 5;
+  init_passes = 20;
+  opti1_passes = 2;
+  final_passes = 25;
+  opti2_passes = 2;
+  filter_passes = 5; 
+
+  wrong_way_cost = crossing_conflict_cost = via_cost = off_grid_cost = smd_off_center_exit_cost = 
+  smd_long_side_exit_cost = via_wire_squeeze_cost = 0;
+
+  max_crossings = max_bends = max_vias = -1;
+  max_length_fanout = max_wrong_way = dist_sharing = -1;
+
+  dir_fanout = 2; pin_sharing = 0; via_sharing = 0; 
+
+  via_at_smd = 0; via_at_smd_pos = 0; 
+
+}
+
+
+
+int dlgReport()
+//------------
+{
+  Result = dlgDialog("Preview DO file")
+  {  
+    dlgVBoxLayout
+    {            
+      //dlgLabel("&Routing flow:");
+
+      string tmp, OutTxt;
+      
+      if (bestsave)
+      {
+        sprintf(tmp, "bestsave on\n");
+        OutTxt += tmp;
+      }
+
+			if (WireGrid)
+      {
+        sprintf(tmp, "grid wire %f\n", WireGrid);
+        OutTxt += tmp;
+      }
+			
+      if (ViaGrid)
+      {
+        sprintf(tmp, "grid via %f\n", ViaGrid);
+        OutTxt += tmp;
+      }
+
+      if (Width)
+      {
+        sprintf(tmp, "rule pcb (width %f)\n", Width);
+        OutTxt += tmp;
+      }
+
+      if (Clr)
+      {
+        sprintf(tmp, "rule pcb (clearance %f)\n", Clr);
+        OutTxt += tmp;
+      }
+
+      if (Via_Via > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type via_via))\n", Via_Via);
+        OutTxt += tmp;
+      } 
+      if (Via_SMD > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type via_smd))\n", Via_SMD);
+        OutTxt += tmp;
+      }
+      if (Via_Pin > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type via_pin))\n", Via_Pin);
+        OutTxt += tmp;
+      }
+      if (Via_Area > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type via_area))\n", Via_Area);
+        OutTxt += tmp;
+      }
+
+      if (Wire_Wire > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type wire_wire))\n", Wire_Wire);
+        OutTxt += tmp;
+      } 
+      if (Wire_Via > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type wire_via))\n", Wire_Via);
+        OutTxt += tmp;
+      }  
+      if (Wire_SMD > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type wire_smd))\n", Wire_SMD);
+        OutTxt += tmp;
+      }
+      if (Wire_Pin > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type wire_pin))\n", Wire_Pin);
+        OutTxt += tmp;
+      }
+      if (Wire_Area > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type wire_area))\n", Wire_Area);
+        OutTxt += tmp;
+      }  
+
+
+
+      if (Pin_To_Turn > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type pin_to_turn_gap))\n", Pin_To_Turn);
+        OutTxt += tmp;
+      }  
+      if (SMD_To_Turn > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type smd_to_turn_gap))\n", SMD_To_Turn);
+        OutTxt += tmp;
+      }  
+      if (Via_Via_Gap > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type via_to_via_gap))\n", Via_Via_Gap);
+        OutTxt += tmp;
+      }  
+      if (SMD_Via_Gap > 0)
+      {
+        sprintf(tmp, "rule pcb (clearance %f (type smd_to_via_gap))\n", SMD_Via_Gap);
+        OutTxt += tmp;
+      }  
+
+
+
+      if (via_at_smd > 0)
+      {
+        sprintf(tmp, "rule pcb (via_at_smd on");
+        OutTxt += tmp;
+
+        switch (via_at_smd_pos)
+        {
+          case 0: sprintf(tmp, " (grid off))\n"); break;
+          case 2: sprintf(tmp, " (fit on))\n"); break;
+          default: sprintf(tmp, " (grid on))\n"); break;
+        }
+        OutTxt += tmp;
+      }  
+
+
+      for (int i = 0; i < 16; i++)
+      {
+        if (LyrCost[i] != 0)
+        {
+          sprintf(tmp, "cost layer %s %s (type length)\n", LyrName[i], LCosts[LyrCost[i]]);
+          OutTxt += tmp;
+          LyrName[i];
+        }
+      }
+
+
+      if (wrong_way_cost)
+      {
+        sprintf(tmp, "%s %s\n", "cost way ", Costs[wrong_way_cost]); 
+        OutTxt += tmp;
+      }  
+      if (crossing_conflict_cost)
+      {
+        sprintf(tmp, "%s %s\n", "cost cross ", Costs[crossing_conflict_cost]); 
+        OutTxt += tmp;
+      }  
+      if (via_cost)
+      {
+        sprintf(tmp, "%s %s\n", "cost via ", Costs[via_cost]); 
+        OutTxt += tmp;
+      }  
+      if (off_grid_cost)
+      {
+        sprintf(tmp, "%s %s\n", "cost off_grid ", Costs[off_grid_cost]); 
+        OutTxt += tmp;
+      }  
+      if (smd_off_center_exit_cost)
+      {
+        sprintf(tmp, "%s %s\n", "cost off_center ", Costs[smd_off_center_exit_cost]); 
+        OutTxt += tmp;
+      }  
+      if (smd_long_side_exit_cost)
+      {
+        sprintf(tmp, "%s %s\n", "cost side_exit ", Costs[smd_long_side_exit_cost]); 
+        OutTxt += tmp;
+      }  
+      if (via_wire_squeeze_cost)
+      {
+        sprintf(tmp, "%s %s\n", "cost squeeze ", Costs[via_wire_squeeze_cost]); 
+        OutTxt += tmp;
+      }  
+        
+
+      if (max_crossings > 0)
+      {
+        sprintf(tmp, "%s %d\n", "limit cross ", max_crossings); 
+        OutTxt += tmp;
+      }  
+      if (max_bends > 0)
+      {
+        sprintf(tmp, "%s %d\n", "limit bend ", max_bends); 
+        OutTxt += tmp;
+      }  
+      if (max_vias > 0)
+      {
+        sprintf(tmp, "%s %d\n", "limit via ", max_vias); 
+        OutTxt += tmp;
+      }  
+      if (max_wrong_way > 0)
+      {
+        sprintf(tmp, "%s %f\n", "limit way ", max_wrong_way); 
+        OutTxt += tmp;
+      }  
+
+  
+      if (memory_pass)
+        OutTxt +=  "bus diagonal\n";
+
+      if (fanout_pass)
+      {
+        sprintf(tmp, "%s %d", "fanout", fanout_passes);
+        OutTxt += tmp;
+        if (dir_fanout == 0)
+          OutTxt += " (direction in)";   
+        if (dir_fanout == 1)
+          OutTxt += " (direction out)";   
+        if (pin_sharing == 1)
+          OutTxt += " (pin_share on)";   
+        if (via_sharing == 1)
+          OutTxt += " (via_share on)";   
+        if (dist_sharing != -1)
+        {
+          sprintf(tmp, "%s %f %s", " (share_len ", dist_sharing, ")");
+          OutTxt += tmp;   
+        }
+        if (max_length_fanout != -1)
+        {
+          sprintf(tmp, "%s %f %s", " (max_len ", max_length_fanout, ")");
+          OutTxt += tmp;   
+        }
+        OutTxt +=  "\n";
+      } 
+      if (init_pass)
+      {
+        sprintf(tmp, "%s %d\n", "route", init_passes);
+        OutTxt +=  tmp;
+      }
+      if (opti1_pass)
+      {
+        sprintf(tmp, "%s %d\n", "clean", opti1_passes);
+        OutTxt +=  tmp;
+      }
+      if (final_pass)
+      {
+        sprintf(tmp, "%s %d 16\n", "route", final_passes);
+        OutTxt +=  tmp;
+      }
+      if (opti2_pass)
+      {
+        sprintf(tmp, "%s %d\n", "clean", opti2_passes);
+        OutTxt +=  tmp;
+      }
+      if (filter_pass)
+      {
+        sprintf(tmp, "%s %d\n", "filter", filter_passes);
+        OutTxt +=  tmp;
+      }
+      if (mitre_pass)
+      {
+        sprintf(tmp, "%s\n", "recorner diagonal");
+        OutTxt +=  tmp;
+      }
+
+      OutTxt += "status_file\n";
+
+
+
+      dlgTextView(OutTxt);
+    
+/*
+      dlgSpacing(10);
+
+      dlgGroup("Statistics") 
+      {
+        dlgGridLayout 
+        {
+          dlgCell(0, 0) dlgLabel("Layers:");
+          dlgCell(1, 0) dlgLabel("Classes:");
+          dlgCell(2, 0) dlgLabel("Nets:");
+
+
+          int i=0, n=0, c=0,index[];    
+          board(Board)
+	        {
+            Board.layers(Layer)
+	          {
+		          if (Layer.number >= 1 && Layer.number <= 16)
+                sprintf(layers[i++],"%3d %s",Layer.number,Layer.name); 
+            }
+
+            Board.signals(Net)
+            {
+              nets[n] = Net.name;              
+              n++;
+            }   
+            sort(n, index, nets);
+
+            Board.classes(Class)
+		        {
+			        classes[c] = Class.name;
+              c++;
+		        }	    
+            sort(c, index, classes);
+          }
+          dlgCell(0, 1) dlgComboBox(layers, sel_layer);
+          dlgCell(1, 1) dlgComboBox(classes, sel_class);
+          dlgCell(2, 1) dlgComboBox(nets, sel_net);
+        }
+      }
+*/       
+      dlgHBoxLayout 
+      {
+        dlgSpacing(100);
+        dlgPushButton("+OK") dlgAccept(1);
+//        dlgSpacing(25);
+//        dlgPushButton("-Cancel") dlgReject(0);
+      }
+    }
+  };
+  return Result;
+}
+
+
+
+int SetupDlg()
+//------------
+{
+  Result = dlgDialog("ELECTRA Autorouter - Setup - V" + Version)
+  {  
+//    dlgVBoxLayout
+//    {
+//      dlgLabel("<img src=\"" + bmpfile + "\">"); 
+//      dlgStretch(0);
+//    }
+
+    dlgTabWidget 
+    {
+      dlgTabPage("&Layers") 
+      {
+        dlgGroup("Layers") 
+        {
+          dlgVBoxLayout
+          {
+            dlgGridLayout 
+            {
+              int i;
+              string str;
+
+              dlgCell(0, 0) dlgLabel("<qt><h3><font color=\"blue\">Layer Name</h3></qt>");
+              dlgCell(0, 1) dlgLabel("<qt><h3><font color=\"blue\">Direction</h3></qt>");
+              dlgCell(0, 2) dlgSpacing(5);
+              dlgCell(0, 3) dlgLabel("<qt><h3><font color=\"blue\">Layer Type</h3></qt>");
+              dlgCell(0, 4) dlgSpacing(5);
+              dlgCell(0, 5) dlgLabel("<qt><h3><font color=\"blue\">Usage Cost</h3></qt>");
+
+              for (i = 0; i < 16; i++)           
+              {
+                sprintf(str, "%3d %s", i+1, LyrName[i]);
+                dlgCell(i+1, 0) dlgLabel(str);
+                dlgCell(i+1, 1) dlgComboBox(Ldirs, LyrDir[i]);
+                dlgCell(i+1, 2) dlgSpacing(5);
+                dlgCell(i+1, 3) dlgComboBox(Ltypes, LyrType[i]);
+                dlgCell(i+1, 4) dlgSpacing(5);
+                dlgCell(i+1, 5) dlgComboBox(LCosts, LyrCost[i]);
+              }
+            } 
+          }
+        }
+      }
+
+      dlgTabPage("&Wiring") 
+      {         
+        dlgHBoxLayout 
+        {
+          dlgGroup("Wiring rules") 
+          {          
+            dlgLabel("<qt><font color=\"blue\">Default Width, Clearance and Via values for all the nets</qt>");
+            dlgLabel("\n");
+            dlgHBoxLayout 
+            {
+              dlgGridLayout 
+              {
+                dlgCell(0, 0) dlgLabel("Wire Width:");
+                dlgCell(1, 0) dlgLabel("Clearance:");
+                dlgCell(2, 0) dlgLabel("Via Size:");
+                dlgCell(3, 0) dlgLabel("Drill Size:");
+								dlgCell(4, 0) dlgLabel("Wire Grid:");
+								dlgCell(5, 0) dlgLabel("Via Grid:");
+
+                dlgCell(0, 1) dlgRealEdit(Width, 0.0, 1000.0);
+                dlgCell(1, 1) dlgRealEdit(Clr, 0.0, 1000.0);
+                dlgCell(2, 1) dlgRealEdit(ViaSize, 0.0, 1000.0);
+                dlgCell(3, 1) dlgRealEdit(DrillSize, 0.0, 1000.0);
+								dlgCell(4, 1) dlgRealEdit(WireGrid, 0.0, 1000.0);
+								dlgCell(5, 1) dlgRealEdit(ViaGrid, 0.0, 1000.0);
+
+              }
+            }
+          }
+
+          dlgGroup("Via at SMD") 
+          {          
+            dlgLabel("<qt><font color=\"blue\">Control for allowing vias to be placed under SMD pads, at pad origin, at grid point, or fitted within pad shape</qt>");
+            dlgLabel("\n");
+            dlgVBoxLayout 
+            {
+              dlgCheckBox("Allow Via at SMD", via_at_smd); 
+              dlgRadioButton("At SMD Origin", via_at_smd_pos);
+              dlgRadioButton("At SMD Grid", via_at_smd_pos);
+              dlgRadioButton("Fit Inside SMD", via_at_smd_pos);
+            }
+          }
+        } 
+      }
+
+
+      dlgTabPage("&Spacings") 
+      {
+        dlgGroup("Clearance rules") 
+        {
+          dlgLabel("<qt><font color=\"blue\">Detail clearance between object types (Area is for board outline and keepouts)</qt>");
+          dlgLabel("\n");
+          dlgVBoxLayout
+          {
+            dlgGridLayout 
+            {
+              dlgCell(0, 0) dlgLabel("Wire_Wire:");
+              dlgCell(1, 0) dlgLabel("Wire_Via:");
+              dlgCell(2, 0) dlgLabel("Wire_SMD:");
+              dlgCell(3, 0) dlgLabel("Wire_Pin:");
+              dlgCell(4, 0) dlgLabel("Wire_Area:");
+
+              dlgCell(0, 1) dlgRealEdit(Wire_Wire, -1.0, 1000.0);
+              dlgCell(1, 1) dlgRealEdit(Wire_Via, -1.0, 1000.0);
+              dlgCell(2, 1) dlgRealEdit(Wire_SMD, -1.0, 1000.0);
+              dlgCell(3, 1) dlgRealEdit(Wire_Pin, -1.0, 1000.0);
+              dlgCell(4, 1) dlgRealEdit(Wire_Area, -1.0, 1000.0);
+
+              dlgCell(0, 2) dlgLabel("  Via_Via:");
+              dlgCell(1, 2) dlgLabel("  Via_SMD:");
+              dlgCell(2, 2) dlgLabel("  Via_Pin:");
+              dlgCell(3, 2) dlgLabel("  Via_Area:");
+
+              dlgCell(0, 3) dlgRealEdit(Via_Via, -1.0, 1000.0);
+              dlgCell(1, 3) dlgRealEdit(Via_SMD, -1.0, 1000.0);
+              dlgCell(2, 3) dlgRealEdit(Via_Pin, -1.0, 1000.0);
+              dlgCell(3, 3) dlgRealEdit(Via_Area, -1.0, 1000.0);
+            } 
+          }
+        }
+        
+        dlgGroup("Same Net Minimum Gap") 
+        {
+          dlgLabel("<qt><font color=\"blue\">Minimum gap allowed within same net, between consecutive via or the pad/pin and the first bend in the wire segment</qt>");
+          dlgLabel("\n");
+          dlgVBoxLayout
+          {
+            dlgGridLayout 
+            {
+              dlgCell(0, 0) dlgLabel("Pin_To_Turn:");
+              dlgCell(1, 0) dlgLabel("SMD_To_Turn:");
+
+              dlgCell(0, 1) dlgRealEdit(Pin_To_Turn, -1.0, 1000.0);
+              dlgCell(1, 1) dlgRealEdit(SMD_To_Turn, -1.0, 1000.0);
+
+              dlgCell(0, 2) dlgLabel("  Via_Via_Gap:");
+              dlgCell(1, 2) dlgLabel("  SMD_Via_Gap:");
+
+              dlgCell(0, 3) dlgRealEdit(Via_Via_Gap, -1.0, 1000.0);
+              dlgCell(1, 3) dlgRealEdit(SMD_Via_Gap, -1.0, 1000.0);
+            } 
+          }
+        }
+      }
+
+
+      dlgTabPage("&Costs") 
+      {
+        dlgHBoxLayout 
+        {
+          dlgGroup("Costings") 
+          {          
+            dlgLabel("<qt><font color=\"blue\">Setting of routing cost that supercedes the internal costs</qt>");
+            dlgLabel("\n");
+            dlgHBoxLayout 
+            {
+              dlgGridLayout 
+              {
+                dlgCell(0, 0) dlgLabel("Wrong Way:");
+                dlgCell(1, 0) dlgLabel("Crossing Conflict:");
+                dlgCell(2, 0) dlgLabel("Via:");
+                dlgCell(3, 0) dlgLabel("Off Grid Routing:");
+                dlgCell(4, 0) dlgLabel("SMD Off Center Exit:");
+                dlgCell(5, 0) dlgLabel("SMD Long Side Exit:");
+                dlgCell(6, 0) dlgLabel("Via_wire squeeze:");
+
+                dlgCell(0, 1) dlgComboBox(Costs, wrong_way_cost);
+                dlgCell(1, 1) dlgComboBox(Costs, crossing_conflict_cost);
+                dlgCell(2, 1) dlgComboBox(Costs, via_cost);
+                dlgCell(3, 1) dlgComboBox(Costs, off_grid_cost);
+                dlgCell(4, 1) dlgComboBox(Costs, smd_off_center_exit_cost);
+                dlgCell(5, 1) dlgComboBox(Costs, smd_long_side_exit_cost);
+                dlgCell(6, 1) dlgComboBox(Costs, via_wire_squeeze_cost);
+              }
+            }
+          }
+
+          dlgGroup("Max Limits") 
+          {          
+            dlgLabel("<qt><font color=\"blue\">Absolute cost applied for each net for the number of crossings, vias, bends and maximum allowed distance in going the wrong way from the layer preferred direction</qt>");
+            dlgLabel("\n");
+            dlgHBoxLayout 
+            {
+              dlgGridLayout 
+              {
+                dlgCell(0, 0) dlgLabel("Max Crossings:");
+                dlgCell(1, 0) dlgLabel("Max Bends:");
+                dlgCell(2, 0) dlgLabel("Max Vias:");
+                dlgCell(3, 0) dlgLabel("Wrong Way:");
+
+                dlgCell(0, 1) dlgIntEdit(max_crossings, -1, 1000);
+                dlgCell(1, 1) dlgIntEdit(max_bends, -1, 1000);
+                dlgCell(2, 1) dlgIntEdit(max_vias, -1, 1000);
+                dlgCell(3, 1) dlgRealEdit(max_wrong_way, -1.0, 1000.0);
+              }
+            }
+          }
+        } 
+      }
+  
+
+      dlgTabPage("&Strategy") 
+      {
+        dlgHBoxLayout 
+        {
+          dlgGroup("Routing Passes") 
+          {          
+            dlgLabel("<qt><font color=\"blue\">Set routing schedule and number of passes</qt>");
+            dlgLabel("\n");
+            dlgVBoxLayout 
+            {
+              dlgGridLayout 
+              {
+                dlgCell(0, 0) dlgLabel("<qt><font color=\"blue\">PreRouting</qt>");
+                dlgCell(1, 0) dlgCheckBox("Memory Route", memory_pass);
+                dlgCell(2, 0) dlgCheckBox("Fanout", fanout_pass); 
+                dlgCell(3, 0) dlgLabel("<qt><font color=\"blue\">Initial Routing</qt>");
+                dlgCell(4, 0) dlgCheckBox("Initial Routing", init_pass); 
+                dlgCell(6, 0) dlgCheckBox("Optimize", opti1_pass); 
+                dlgCell(7, 0) dlgLabel("<qt><font color=\"blue\">Final Routing</qt>");
+                dlgCell(8, 0) dlgCheckBox("Final Routing", final_pass); 
+                dlgCell(10, 0) dlgCheckBox("Optimize", opti2_pass); 
+                dlgCell(11, 0) dlgLabel("<qt><font color=\"blue\">Remove Conflicts</qt>");
+                dlgCell(12, 0) dlgCheckBox("Filter", filter_pass); 
+                dlgCell(13, 0) dlgLabel("<qt><font color=\"blue\">Mitre corners to 45</qt>");
+                dlgCell(14, 0) dlgCheckBox("Mitre", mitre_pass); 
+
+                dlgCell(2, 1) dlgSpinBox(fanout_passes, 0, 1000);
+                dlgCell(4, 1) dlgSpinBox(init_passes, 0, 1000);
+                dlgCell(6, 1) dlgSpinBox(opti1_passes, 0, 1000);
+                dlgCell(8, 1) dlgSpinBox(final_passes, 0, 1000);
+                dlgCell(10, 1) dlgSpinBox(opti2_passes, 0, 1000);
+                dlgCell(12, 1) dlgSpinBox(filter_passes, 0, 1000);
+              }
+            }
+          }
+
+          dlgGroup("SMD Fanout") 
+          {          
+            dlgLabel("<qt><font color=\"blue\">Fanout is the breakout escape wires/via pattern generated from SMD pads</qt>");
+            dlgLabel("\n");
+             
+            dlgVBoxLayout 
+            {
+              dlgGridLayout 
+              {
+                dlgCell(0, 0) dlgLabel("Direction:");
+                dlgCell(1, 0) dlgLabel("Max Length:");
+                dlgCell(2, 0, 4, 1) 
+                  dlgGroup("Sharing") 
+                  { 
+                    dlgCheckBox("Pin", pin_sharing); 
+                    dlgCheckBox("Via", via_sharing);
+                    dlgHBoxLayout
+                    { 
+                      dlgLabel("Share within Dist:");
+                      dlgRealEdit(dist_sharing, -1.0, 1000.0);
+                    } 
+                  };
+
+                dlgCell(0, 1) dlgComboBox(FanoutDirs, dir_fanout);
+                dlgCell(1, 1) dlgRealEdit(max_length_fanout, -1.0, 1000.0);
+              }
+            }
+          }
+        } 
+      }
+
+    }
+
+    dlgSpacing(10);
+    dlgVBoxLayout 
+    {
+
+      dlgGroup("Misc") 
+      {
+        dlgHBoxLayout 
+        {           
+          dlgGridLayout 
+          {
+            dlgCell(0, 0, 0, 8) dlgCheckBox("Protect existing routes", preprotect);
+            dlgCell(1, 0, 1, 8) dlgCheckBox("Bestsave", bestsave);
+          }
+        }
+      }     
+      
+      dlgHBoxLayout 
+      {
+        dlgGridLayout 
+        {
+          //dlgCell(0, 0, 0, 2) dlgPushButton("Reset to &Default") 
+          //{if (dlgMessageBox("Please Confirm Resetting of All Values to Default", "&Yes", "&No") == 0) 
+             //dlgReject(-1);};
+          dlgCell(0, 3, 0, 4) dlgPushButton("&Preview DO file...") dlgReport();
+          dlgCell(0, 5, 0, 6) dlgPushButton("+OK") dlgAccept(1);
+          dlgCell(0, 7, 0, 8) dlgPushButton("-Cancel") dlgReject(0);
+        }
+      }
+    }
+  };
+
+  return Result;
+}
+
+
+
+board(Board)
+//----------
+{
+  DefaultName = filesetext(Board.name, ".dsn");
+	Filename = dlgFileSave("Eagle to DSN Format",DefaultName,"*.dsn");
+
+	if (strlen(Filename))
+	{
+    if (filesize(Filename)) 
+    {
+      string Tmp;
+      sprintf(Tmp, "%s%s%s", "File ", Filename, "  exists already, do you want to override it?"); 
+      if (dlgMessageBox(Tmp, "&Yes", "&No") != 0) 
+        exit(0);
+    }
+
+
+    Wire_Via = Via_Pin = Via_SMD = Via_Via = Via_Area = -1;  
+    Wire_Wire = Wire_SMD = Wire_Pin = Wire_Area = -1;
+
+    Pin_To_Turn = SMD_To_Turn = -1;
+    Via_Via_Gap = SMD_Via_Gap = -1;
+
+    minViaOuter = 0;
+
+    //DrillSize = ViaSize/2; 
+    //if (ViaSize == 0)
+      //ViaSize = Width + Clr*2;
+
+    InitDlg();
+
+    string CfgFile;
+    CfgFile = filesetext(Filename, ".cfg");
+
+    if (filesize(CfgFile)) 
+    {
+      string Lines[];
+      int nLines = fileread(Lines, CfgFile);
+
+      if (Lines[0] == "V203")
+      {
+        preprotect = strtol(Lines[2]);
+        bestsave = strtol(Lines[4]);
+
+        for (int i = 5; i < 21; i++)
+          LyrDir[i-5] = strtol(Lines[i]);
+
+        for (i = 21; i < 37; i++)
+          LyrType[i-21] = strtol(Lines[i]);
+
+        for (i = 37; i < 53; i++)
+          LyrCost[i-37] = strtol(Lines[i]);
+
+        Width = strtod(Lines[54]);
+        Clr = strtod(Lines[56]);
+        ViaSize = strtod(Lines[58]); 
+        DrillSize = strtod(Lines[60]); 
+	      WireGrid = strtod(Lines[62]);
+	      ViaGrid = strtod(Lines[64]);
+          
+        Wire_Wire = strtod(Lines[66]);
+        Wire_Via  = strtod(Lines[68]);
+        Wire_SMD  = strtod(Lines[70]);
+        Wire_Pin  = strtod(Lines[72]);
+        Wire_Area = strtod(Lines[74]);
+        Via_Via   = strtod(Lines[76]);
+        Via_SMD   = strtod(Lines[78]);
+        Via_Pin   = strtod(Lines[80]);
+        Via_Area  = strtod(Lines[82]);
+
+        Pin_To_Turn = strtod(Lines[84]);
+        SMD_To_Turn = strtod(Lines[86]);
+        Via_Via_Gap = strtod(Lines[88]);
+        SMD_Via_Gap = strtod(Lines[90]);
+
+        via_at_smd  = strtol(Lines[92]);
+        via_at_smd_pos = strtol(Lines[94]);
+
+        wrong_way_cost = strtol(Lines[96]);
+        crossing_conflict_cost = strtol(Lines[98]);
+        via_cost = strtol(Lines[100]);
+        off_grid_cost = strtol(Lines[102]);
+        smd_off_center_exit_cost = strtol(Lines[104]);
+        smd_long_side_exit_cost = strtol(Lines[106]);
+        via_wire_squeeze_cost = strtol(Lines[108]);
+      
+        max_crossings = strtol(Lines[110]);
+        max_bends = strtol(Lines[112]);
+        max_vias = strtol(Lines[114]);
+        max_wrong_way = strtod(Lines[116]);
+         
+        memory_pass = strtol(Lines[118]);
+        fanout_pass = strtol(Lines[120]);
+        fanout_passes = strtol(Lines[122]);
+        dir_fanout = strtol(Lines[124]);
+        pin_sharing = strtol(Lines[126]);
+        via_sharing = strtol(Lines[128]);
+        dist_sharing = strtod(Lines[130]);
+        max_length_fanout = strtod(Lines[132]);
+
+        init_pass = strtol(Lines[134]);
+        init_passes = strtol(Lines[136]);
+        opti1_pass = strtol(Lines[138]);
+        opti1_passes = strtol(Lines[140]);
+        final_pass = strtol(Lines[142]);
+        final_passes = strtol(Lines[144]);
+        opti2_pass = strtol(Lines[146]);
+        opti2_passes = strtol(Lines[148]);
+        filter_pass = strtol(Lines[150]);
+        filter_passes = strtol(Lines[152]);
+        mitre_pass = strtol(Lines[154]);   
+      }
+    }
+
+
+    string DRUfile = filesetext(Board.name, ".dru");
+    if (!filesize(DRUfile))     
+      DRUfile = dlgFileOpen("Eagle Design Rules File", DRUfile,"*.dru");
+    if (filesize(DRUfile)) 
+    {
+      string Lines[];
+      int nx, nLines = fileread(Lines, DRUfile);      
+
+      for (nx = 0; nx < nLines; nx++)
+      {
+        string a[];
+        int n = strsplit(a, Lines[nx], '=');
+        
+        if (!strstr(a[0], "msWidth"))
+          Width = Str2Unit(a[1]);
+        else
+        if (!strstr(a[0], "rlMinViaOuter"))
+          minViaOuter = Str2Unit(a[1]);
+        else 
+        if (!strstr(a[0], "msDrill"))
+          DrillSize = Str2Unit(a[1]);
+        else
+        if (!strstr(a[0], "mdWireWire"))
+          Clr = Str2Unit(a[1]);
+        else
+        if (!strstr(a[0], "mdCopperDimension"))
+          Via_Area = Wire_Area = Str2Unit(a[1]);
+        else
+        if (!strstr(a[0], "mdWirePad"))
+          Wire_Pin = Str2Unit(a[1]);
+        else
+        if (!strstr(a[0], "mdWireVia"))
+          Wire_Via = Str2Unit(a[1]);
+        else
+        if (!strstr(a[0], "mdWireWire"))
+          Wire_Wire = Str2Unit(a[1]);
+        else
+				if (!strstr("mdViaVia ", a[0]))  
+          Via_Via = Str2Unit(a[1]);
+        else
+        if (!strstr(a[0], "mdPadVia"))
+          Via_Pin = Str2Unit(a[1]);
+      }      
+      
+      ViaSize = DrillSize + minViaOuter*2;
+
+      if (Wire_Area == Clr)
+        Wire_Area = -1; 
+      if (Via_Area == Clr)
+        Via_Area = -1;
+      if (Wire_Via == Clr)
+        Wire_Via = -1;
+      if (Wire_Wire == Clr)
+        Wire_Wire = -1;
+      if (Via_Via == Clr)
+        Via_Via = -1;
+      if (Via_Pin == Clr)
+        Via_Pin = -1;
+      if (Wire_Pin == Clr)
+        Wire_Pin = -1; 
+      
+      //string Tmp;
+      //sprintf(Tmp, "%s %f %s %f %s %f", "Drill=", DrillSize, "minViaOuter=", minViaOuter, "ViaSize=", ViaSize); 
+      //dlgMessageBox(Tmp, "&Yes", "&No"); 
+    }
+
+
+    int ctd = 1;
+    while (ctd)
+    {
+      int ret = SetupDlg();
+      if (ret == 0) // cancel       
+        exit (0);         
+      if (ret == 1)  // OK
+        ctd = 0;
+      //else 
+        //InitDlg();
+    }
+    
+
+    string BasicDoFile;
+    BasicDoFile = filedir(Filename) + "Basic.do";
+    output(BasicDoFile)
+    {
+      if (bestsave)
+        printf("bestsave on\n");
+
+      if (WireGrid)
+        printf("grid wire %f\n", WireGrid);
+
+      if (ViaGrid)
+        printf("grid via %f\n", ViaGrid);
+			
+			if (Width)
+        printf("rule pcb (width %f)\n", Width);
+
+      if (Clr)
+        printf("rule pcb (clearance %f)\n", Clr);
+
+      if (Via_Via > 0)
+        printf("rule pcb (clearance %f (type via_via))\n", Via_Via);
+
+      if (Via_SMD > 0)
+        printf("rule pcb (clearance %f (type via_smd))\n", Via_SMD);
+
+      if (Via_Pin > 0)
+        printf("rule pcb (clearance %f (type via_pin))\n", Via_Pin);
+
+      if (Via_Area > 0)
+        printf("rule pcb (clearance %f (type via_area))\n", Via_Area);
+
+      if (Wire_Wire > 0)
+        printf("rule pcb (clearance %f (type wire_wire))\n", Wire_Wire);
+
+      if (Wire_Via > 0)
+        printf("rule pcb (clearance %f (type wire_via))\n", Wire_Via);
+
+      if (Wire_SMD > 0)
+        printf("rule pcb (clearance %f (type wire_smd))\n", Wire_SMD);
+
+      if (Wire_Pin > 0)
+        printf("rule pcb (clearance %f (type wire_pin))\n", Wire_Pin);
+
+      if (Wire_Area > 0)
+        printf("rule pcb (clearance %f (type wire_area))\n", Wire_Area);
+
+      if (Pin_To_Turn > 0)
+        printf("rule pcb (clearance %f (type pin_to_turn_gap))\n", Pin_To_Turn);
+
+      if (SMD_To_Turn > 0)
+        printf("rule pcb (clearance %f (type smd_to_turn_gap))\n", SMD_To_Turn);
+
+      if (Via_Via_Gap > 0)
+        printf("rule pcb (clearance %f (type via_to_via_gap))\n", Via_Via_Gap);
+
+      if (SMD_Via_Gap > 0)
+        printf("rule pcb (clearance %f (type smd_to_via_gap))\n", SMD_Via_Gap);
+
+      if (via_at_smd > 0)
+      {
+        printf("rule pcb (via_at_smd on");
+
+        switch (via_at_smd_pos)
+        {
+          case 0: printf(" (grid off))\n"); break;
+          case 2: printf(" (fit on))\n"); break;
+          default: printf(" (grid on))\n"); break;
+        }
+      }  
+
+
+      for (int i = 0; i < 16; i++)
+      {
+        if (LyrCost[i] != 0)
+        {
+          printf("cost layer %s %s (type length)\n", LyrName[i], LCosts[LyrCost[i]]);
+          LyrName[i];
+        }
+      }
+
+
+      if (wrong_way_cost)
+        printf("%s %s\n", "cost way ", Costs[wrong_way_cost]); 
+
+      if (crossing_conflict_cost)
+        printf("%s %s\n", "cost cross ", Costs[crossing_conflict_cost]); 
+
+      if (via_cost)
+        printf("%s %s\n", "cost via ", Costs[via_cost]); 
+
+      if (off_grid_cost)
+        printf("%s %s\n", "cost off_grid ", Costs[off_grid_cost]); 
+
+      if (smd_off_center_exit_cost)
+        printf("%s %s\n", "cost off_center ", Costs[smd_off_center_exit_cost]); 
+
+      if (smd_long_side_exit_cost)
+        printf("%s %s\n", "cost side_exit ", Costs[smd_long_side_exit_cost]); 
+
+      if (via_wire_squeeze_cost)
+        printf("%s %s\n", "cost squeeze ", Costs[via_wire_squeeze_cost]);        
+
+      if (max_crossings > 0)
+        printf("%s %d\n", "limit cross ", max_crossings); 
+
+      if (max_bends > 0)
+        printf("%s %d\n", "limit bend ", max_bends); 
+
+      if (max_vias > 0)
+        printf("%s %d\n", "limit via ", max_vias); 
+
+      if (max_wrong_way > 0)
+        printf("%s %f\n", "limit way ", max_wrong_way); 
+  
+      if (memory_pass)
+        printf("bus diagonal\n");
+
+      if (fanout_pass)
+      {
+        printf("%s %d", "fanout", fanout_passes);
+        if (dir_fanout == 0)
+          printf(" (direction in)");   
+        if (dir_fanout == 1)
+          printf(" (direction out)");   
+        if (pin_sharing == 1)
+          printf(" (pin_share on)");   
+        if (via_sharing == 1)
+          printf(" (via_share on)");   
+        if (dist_sharing != -1)
+          printf("%s %f %s", " (share_len ", dist_sharing, ")");
+
+        if (max_length_fanout != -1)
+          printf("%s %f %s", " (max_len ", max_length_fanout, ")");
+        printf("\n");
+      } 
+      if (init_pass)
+        printf("%s %d\n", "route", init_passes);
+
+      if (opti1_pass)
+        printf("%s %d\n", "clean", opti1_passes);
+
+      if (final_pass)
+        printf("%s %d 16\n", "route", final_passes);
+
+      if (opti2_pass)
+        printf("%s %d\n", "clean", opti2_passes);
+
+      if (filter_pass)
+        printf("%s %d\n", "filter", filter_passes);
+
+      if (mitre_pass)
+        printf("%s\n", "recorner diagonal");
+
+      printf("status_file\n");
+    }
+
+
+    output(CfgFile)
+    {
+      printf("%s\n", "V203");
+      printf("preprotect\n%d\n", preprotect);
+      printf("bestsave\n%d\n", bestsave);
+
+      for (int i = 0; i < 16; i++)
+        printf("%d\n", LyrDir[i]);
+
+      for (i = 0; i < 16; i++)
+        printf("%d\n", LyrType[i]);
+
+      for (i = 0; i < 16; i++)
+        printf("%d\n", LyrCost[i]);
+
+      printf("width\n%f\n", Width); 
+      printf("clr\n%f\n", Clr);
+      printf("viasize\n%f\n", ViaSize);
+      printf("drillsize\n%f\n", DrillSize);
+			printf("wiregrid\n%f\n", WireGrid);
+			printf("viagrid\n%f\n", ViaGrid);
+           
+      printf("w_w\n%f\n", Wire_Wire);
+      printf("w_v\n%f\n", Wire_Via);
+      printf("w_s\n%f\n", Wire_SMD);
+      printf("w_p\n%f\n", Wire_Pin);
+      printf("w_a\n%f\n", Wire_Area);
+      printf("v_v\n%f\n", Via_Via);
+      printf("v_s\n%f\n", Via_SMD);
+      printf("v_p\n%f\n", Via_Pin);
+      printf("v_a\n%f\n", Via_Area);
+
+      printf("pin_to_turn\n%f\n", Pin_To_Turn);
+      printf("smd_to_turn\n%f\n", SMD_To_Turn);
+
+      printf("via_via_gap\n%f\n", Via_Via_Gap);
+      printf("smd_via_gap\n%f\n", SMD_Via_Gap);
+
+      printf("via_at_smd\n%d\n", via_at_smd);
+      printf("via_at_smd_pos\n%d\n", via_at_smd_pos);
+
+      printf("wrong_way_cost\n%d\n", wrong_way_cost);
+      printf("crossing_conflict\n%d\n", crossing_conflict_cost);
+      printf("via_cost\n%d\n", via_cost);
+      printf("off_grid_cost\n%d\n", off_grid_cost);
+      printf("smd_off_center_exit_cost\n%d\n", smd_off_center_exit_cost);
+      printf("smd_long_side_exit_cost\n%d\n", smd_long_side_exit_cost);
+      printf("via_wire_squeeze_cost\n%d\n", via_wire_squeeze_cost);
+      
+      printf("max_crossings\n%d\n", max_crossings);
+      printf("max_bends\n%d\n", max_bends);
+      printf("max_vias\n%d\n", max_vias);
+      printf("max_wrong_way\n%f\n", max_wrong_way);
+         
+      printf("memory\n%d\n", memory_pass);
+      printf("fanout\n%d\n", fanout_pass);
+      printf("fanout_passes\n%d\n", fanout_passes);
+      printf("fanout_dir\n%d\n", dir_fanout);
+      printf("pin_sharing\n%d\n", pin_sharing);
+      printf("via_sharing\n%d\n", via_sharing);
+      printf("dist_sharing\n%f\n", dist_sharing);
+      printf("fanout_max_length\n%f\n", max_length_fanout);
+
+      printf("init_pass\n%d\n", init_pass);
+      printf("init_passes\n%d\n", init_passes);
+      printf("opti1_pass\n%d\n", opti1_pass);
+      printf("opti1_passes\n%d\n", opti1_passes);
+      printf("final_pass\n%d\n", final_pass);
+      printf("final_passes\n%d\n", final_passes);
+      printf("opti2_pass\n%d\n", opti2_pass);
+      printf("opti2_passes\n%d\n", opti2_passes);
+      printf("filter_pass\n%d\n", filter_pass);
+      printf("filter_passes\n%d\n", filter_passes);
+      printf("mitre_pass\n%d\n", mitre_pass);     
+    }
+
+    status("Processing for Electra...");
+
+		output(Filename)
+		{
+			Header();
+      PadTypes();
+      printf("  (structure\n");
+      Layers();
+      Structure();        
+      Colors(); 
+      printf("  )\n");
+     	Placement(); 
+			Images();
+			Network();
+      Wiring();
+      printf(")"); 
+		}
+
+	}
+}

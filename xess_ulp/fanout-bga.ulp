@@ -1,0 +1,617 @@
+#usage	"<b>Fanout BGA</b>\n"
+	"<p>"
+	"This ULP fans out connections from BGA pads."
+	"<p>"
+	"Usage:<p>"
+	"<blockquote>"
+	"1. Start this ULP within a board layout.<p>"
+	"2. Enter the part name of the BGA whose pins need to be fanned out.<p>"
+	"3. Enter additional wire/via parameters.<p>"
+	"4. Click on OK.<p>"
+	"</blockquote>"
+	"Note:<p>"
+	"<blockquote>"
+	"This ULP outputs several '.scr' temporary files in the same directory as the project. "
+	"It does NOT automatically delete them.<p>"
+	"This ULP was tested on EAGLE standard ver 4.15 for Windows.<p>"
+	"</blockquote>"
+	"<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+#include "useful-routines.ulp"
+#include "xess-useful-routines.ulp"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Global variables and constants.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+// input parameters from GUI
+real	via_diameter	= 24;		// diameter of via pad on all layers (mils)
+real	via_drill	= 14;		// diameter of via hole (mils)
+int	use_blind_vias	= 0;		// non-zero if blind vias are used
+int	via_unit	= 0;		// units for via dimensions (0=mils,1=mm)
+real	trace_width	= 5;		// width of wire traces (mils)
+real	trace_space	= 5;		// distance between adjacent traces (mils)
+int	trace_unit	= 0;		// units for trace dimensions (0=mils,1=mm)
+int	use_layer[];			// layers to be used for fanout (0=don't use; 1=use)
+int ignore_plane_nets = 0;  // don't fanout plane nets if set
+string	plane_nets	= "";		// string containing names of all plane nets (usually power and ground)
+string	plane_net[];			// names of individual plane nets
+string	plane_net_name[];
+int	plane_net_plane[];
+int	num_plane_nets	= 0;		// number of plane nets
+
+// parameters calculated from the BGA pad layout
+real	pad_size;			// maximum dimension of BGA pads
+real	row_separation;			// minimum vertical separation between rows of BGA pads
+real	col_separation;			// minimum horizontal separation between columns of BGA pads
+int	num_row_tracks_per_layer[];	// number of horizontal routing tracks on each layer
+int	num_col_tracks_per_layer[];	// number of vertical routing tracks on each layer
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Subroutines.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////
+// Create fanout route from a BGA pad.
+//////////////////////////////////////////////////////////////////////////
+void route_fanout(UL_CONTACT C, UL_ELEMENT E,
+			int depth, // number of rows or columns from pad to edge of array of pads
+			int bot, // indicates if the pad is in the top or bottom half of the array of pads
+			int lft, // indicates if the pad is in the left or right half of the array of pads
+			int do_col_route // indicates if routing is vertical between columns or horiz. between rows
+		)
+{
+	int	pad_layer;	// layer of the BGA pad
+	int	last_layer;	// layer on the opposite side away from the BGA pads
+	int	layer_direction;	// direction from pad_layer to last_layer
+	int	fanout_layer=0;	// layer that the pad fanout routing will use
+	int	fanout_track;	// track between rows or columns for the fanout routing
+
+	// set these depending upon whether BGA pads are on the top or bottom of the board
+	pad_layer	= E.mirror ? bot_layer : top_layer;
+	last_layer	= E.mirror ? top_layer : bot_layer;
+	layer_direction	= E.mirror ? -1        : 1;
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	// PLANE NET FANOUT
+	// Route simple stub and via to pad if it is connected to a signal plane (usually power or ground).
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	for(int net=0; net<num_plane_nets; net++)
+	{
+		if(C.smd.signal == plane_net_name[net])
+		{
+      if(ignore_plane_nets)
+        return;
+
+			real Cx, Cy, Dx, Dy;	// coordinates of points on board
+			real cx, cy, dx, dy;	// untranslated coordinates after BGA is unmirrored, unrotated, untranslated
+			Cx = C.x;		// BGA pad coordinates on board
+			Cy = C.y;
+			cx = untranslate_x(Cx,Cy,E); // untranslated BGA pad coordinates
+			cy = untranslate_y(Cx,Cy,E);
+			real ddx;
+			real ddy;
+
+			if(depth == 0)
+			{
+				// if pad is on the edge of the array, just route vertically or horizontally and place a via
+				ddx = !do_col_route ? 0.5 * pad_size + 0.5 * via_diameter + trace_space : 0;
+				ddy =  do_col_route ? 0.5 * pad_size + 0.5 * via_diameter + trace_space : 0;
+			}
+			else
+			{
+				// if pad is inside the array, route at 45 degrees and place a via
+				ddx = 0.5 * col_separation;
+				ddy = 0.5 * row_separation;
+			}
+			dx = cx + ddx * (lft ? -1:1); // bot and lft determine the direction of the via w.r.t. the BGA pad
+			dy = cy + ddy * (bot ? -1:1);
+			Dx = translate_x(dx,dy,E);
+			Dy = translate_y(dx,dy,E);
+			draw_via(pad_layer,use_blind_vias?plane_net_plane[net]:((pad_layer==16)?1:16),C.smd.signal,via_diameter,via_drill,Dx,Dy);
+
+			// draw a wire connecting the plane connection via to the BGA pad
+			draw_wire(pad_layer,C.smd.signal,trace_width,Cx,Cy,Dx,Dy);
+
+			// this concludes fanout routing for a plane net
+			return;
+		}
+	}
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	// SIGNAL NET FANOUT
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	
+	// Proceed through the possible routing layers until we find the one for routing the
+	// fanout for this pad.  Outermost pads (depth==0) use the pad_layer.  Pads at larger
+	// depths use vias to reach lower layers for routing.
+	int num_used_tracks = 0;
+	int num_used_layers = 0;
+	for(int l=pad_layer; l!=(last_layer+layer_direction); l+=layer_direction)
+	{
+		if(use_layer[l] == 0)
+			continue; // skip if this layer is not to be used for routing
+
+		// get the number of routing tracks for this layer and routing direction
+		int num_tracks = do_col_route ? num_col_tracks_per_layer[l] : num_row_tracks_per_layer[l];
+
+		// routing track 0 will be blocked if fanout has already used two layers and blind vias are not used 
+		int obstructed = (num_used_layers>=2 && !use_blind_vias) ? 1 : 0;
+
+		// if there are no via obstructions, then add an additional routing track 0 directly from the pad or jog via
+		if(!obstructed)
+			num_tracks++;
+
+		// see if this is the layer where the routing for this pad should go
+		if(depth < num_used_tracks + num_tracks)
+		{
+			fanout_layer = l; // use this layer for fanout
+			fanout_track = depth - num_used_tracks; // outer ring on this layer uses track 0, inner rings use higher-value tracks
+			if(obstructed)
+				fanout_track++; // don't allow track 0 to be used if obstructions exist
+			break; // found the routing layer and track, so break from the loop
+		}
+
+		// this layer is already used up with fanout routing, so increment counters and go to the next layer
+		num_used_tracks += num_tracks;
+		num_used_layers++;
+	}
+
+if(debug)
+{
+	sprintf(tmp,"%s: layer=%d track=%d\n",C.name,fanout_layer,fanout_track);
+	debug_text += tmp;
+}
+
+	// exit if no layer could be found to fanout from the pad
+	// (should we issue a warning??)
+	if(fanout_layer==0)
+		return;
+
+	// now draw the fanout routing from the BGA pad	
+	real Cx, Cy, Dx, Dy;	// coordinates of points on board
+	real cx, cy, dx, dy;	// untranslated coordinates after BGA is unmirrored, unrotated, untranslated
+	Cx = C.x;		// BGA pad coordinates on board
+	Cy = C.y;
+	cx = untranslate_x(Cx,Cy,E); // untranslated BGA pad coordinates
+	cy = untranslate_y(Cx,Cy,E);
+	real ddx = 0;
+	real ddy = 0;
+	real diameter = pad_size;
+
+	// create a jog via if the fanout is not on the BGA pad layer
+	if(fanout_layer != pad_layer)
+	{
+		// place the via midway between the BGA rows and columns 
+		ddx = 0.5 * col_separation;
+		ddy = 0.5 * row_separation;
+		dx = cx + ddx * (lft ? -1:1); // bot and lft determine the direction of the jog via w.r.t. the BGA pad
+		dy = cy + ddy * (bot ? -1:1);
+		Dx = translate_x(dx,dy,E);
+		Dy = translate_y(dx,dy,E);
+		draw_via(pad_layer,use_blind_vias?fanout_layer:((pad_layer==16)?1:16),C.smd.signal,via_diameter,via_drill,Dx,Dy);
+
+		// draw a wire connecting the via to the BGA pad
+		draw_wire(pad_layer,C.smd.signal,trace_width,Cx,Cy,Dx,Dy);
+
+		// set the point so further routing proceeds from this jog via, not the BGA pad
+		Cx = Dx;
+		Cy = Dy;
+		cx = dx;
+		cy = dy;
+
+		diameter = via_diameter;
+	}
+	
+	// create a jog from the pad/via if this routing track != 0
+	// because we have to avoid an obstructing via to get a clear shot to the edge of the BGA pad array
+	if(fanout_track!=0)
+	{
+		dx = cx + (0.5 * diameter - 0.5 * trace_width + fanout_track * (trace_width+trace_space)) * (lft ? -1:1);
+		dy = cy + (0.5 * diameter - 0.5 * trace_width + fanout_track * (trace_width+trace_space)) * (bot ? -1:1);
+		Dx = translate_x(dx,dy,E);
+		Dy = translate_y(dx,dy,E);
+		draw_wire(fanout_layer,C.smd.signal,trace_width,Cx,Cy,Dx,Dy);
+		Cx = Dx;
+		Cy = Dy;
+		cx = dx;
+		cy = dy;
+		if(do_col_route)
+			ddy += 0.5 * diameter - 0.5 * trace_width + fanout_track * (trace_width+trace_space);
+		else
+			ddx += 0.5 * diameter - 0.5 * trace_width + fanout_track * (trace_width+trace_space);
+	}
+
+	// create the final wire that reaches the edge of the BGA pad array
+	if(do_col_route)
+	{
+		dx = cx;
+		dy = cy + ((depth + 0.5) * row_separation - ddy) * (bot ? -1:1);
+	}
+	else
+	{
+		dx = cx + ((depth + 0.5) * col_separation - ddx) * (lft ? -1:1);
+		dy = cy;
+	}
+	Dx = translate_x(dx,dy,E);
+	Dy = translate_y(dx,dy,E);
+	draw_wire(fanout_layer,C.smd.signal,trace_width,Cx,Cy,Dx,Dy);
+}
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+// Start of the main routine.
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+
+if(!board)
+	report_errors("Start this ULP from a board layout!");
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Get input parameters from the user.
+/////////////////////////////////////////////////////////////////////////////////////////
+int result = dlgDialog("Fanout BGA")
+{
+	dlgHBoxLayout
+	{
+		dlgLabel("Part ID ");
+		dlgStringEdit(part_id);	// get the identifier for the BGA part whose pins will be fanned out
+	}
+	dlgGroup("Via Parameters")
+	{
+		dlgVBoxLayout
+		{
+			dlgHBoxLayout
+			{
+				dlgLabel("Diameter");
+				dlgRealEdit(via_diameter,0);
+				dlgLabel("  Drill");
+				dlgRealEdit(via_drill,0);
+				dlgVBoxLayout
+				{
+					dlgRadioButton("mils", via_unit) { via_diameter *= mil_per_mm; via_drill *= mil_per_mm; }; 
+					dlgRadioButton("mm", via_unit)   { via_diameter *= mm_per_mil; via_drill *= mm_per_mil; }; 
+				}
+			}
+			dlgHBoxLayout
+			{
+				dlgStretch(1);
+				dlgCheckBox("Blind",use_blind_vias);
+				dlgStretch(1);
+			}
+		}
+	}
+	dlgGroup("Wire Trace Parameters")
+	{
+		dlgHBoxLayout
+		{
+			dlgLabel("Width");
+			dlgRealEdit(trace_width,0);
+			dlgLabel("  Space");
+			dlgRealEdit(trace_space,0);
+			dlgLabel("  Units");
+			dlgVBoxLayout
+			{
+				dlgRadioButton("mils", trace_unit) { trace_width *= mil_per_mm; trace_space *= mil_per_mm; }; 
+				dlgRadioButton("mm", trace_unit)   { trace_width *= mm_per_mil; trace_space *= mm_per_mil; }; 
+			}
+		}
+	}
+	dlgGroup("Fanout Layers")
+	{
+		dlgHBoxLayout
+		{
+			dlgCheckBox("1",use_layer[1]);
+			dlgCheckBox("2",use_layer[2]);
+			dlgCheckBox("3",use_layer[3]);
+			dlgCheckBox("4",use_layer[4]);
+			dlgCheckBox("5",use_layer[5]);
+			dlgCheckBox("6",use_layer[6]);
+			dlgCheckBox("7",use_layer[7]);
+			dlgCheckBox("8",use_layer[8]);
+		}
+		dlgHBoxLayout
+		{
+			dlgCheckBox("9",use_layer[9]);
+			dlgCheckBox("10",use_layer[10]);
+			dlgCheckBox("11",use_layer[11]);
+			dlgCheckBox("12",use_layer[12]);
+			dlgCheckBox("13",use_layer[13]);
+			dlgCheckBox("14",use_layer[14]);
+			dlgCheckBox("15",use_layer[15]);
+			dlgCheckBox("16",use_layer[16]);
+		}
+	}
+  dlgGroup("Plane Nets")
+  {
+  	dlgHBoxLayout
+  	{
+  		dlgLabel("Plane Nets");
+  		dlgStringEdit(plane_nets);	// get names of plane nets
+  	}
+    dlgCheckBox("Ignore Plane Nets",ignore_plane_nets);
+  }
+	dlgHBoxLayout
+	{
+		dlgStretch(1);
+		dlgPushButton("+OK")    dlgAccept();
+		dlgPushButton("Cancel") dlgReject();
+		dlgStretch(1);
+	}
+};
+
+// abort if the cancel button was pressed
+if(result == 0)
+	exit (0);
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Post-process the input parameters.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+// make sure part ID is in upper-case to match part IDs on board
+part_id = strupr(part_id);
+if(part_id == "")
+	report_errors("ERROR: missing part identifier\n");
+
+// convert via and trace dimensions to internal units
+if(trace_unit==0) // convert mils to mm
+{
+	trace_width *= mm_per_mil;
+	trace_space *= mm_per_mil;
+}
+if(via_unit==0) // convert mils to mm
+{
+	via_diameter *= mm_per_mil;
+	via_drill    *= mm_per_mil;
+}
+// convert mm to internal units
+trace_width	*= u_per_mm;
+trace_space	*= u_per_mm;
+via_diameter	*= u_per_mm;
+via_drill	*= u_per_mm;
+
+// get names of plane nets from space-separated string
+if(plane_nets != "")
+{
+  plane_nets = strupr(plane_nets);  // upper-case all plane net names
+	num_plane_nets = strsplit(plane_net,plane_nets,' ');
+	debug_text += ":" + plane_nets + ":";
+	for(int net=0; net<num_plane_nets; net++)
+	{
+		string net_and_plane[];
+		int k = strsplit(net_and_plane,plane_net[net],':');
+		if(k != 2)
+		{
+      if(ignore_plane_nets)
+      {
+        plane_net_name[net] = plane_net[net];
+        plane_net_plane[net] = 0;
+      }
+      else
+      {
+        sprintf(tmp,"ERROR: Plane net %s has an error\n",plane_net[net]);
+        error_text += tmp;
+        num_errors++;
+      }
+		}
+		else
+		{
+			plane_net_name[net] = strupr(net_and_plane[0]);
+			plane_net_plane[net] = int(strtod(net_and_plane[1]));
+		}
+	}
+	if(debug)
+	{
+		for(int net=0; net<num_plane_nets; net++)
+		{
+			sprintf(tmp,"plane net: %s - %d\n",plane_net_name[net],plane_net_plane[net]);
+			debug_text += tmp;
+		}
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// initialize the script with global settings
+/////////////////////////////////////////////////////////////////////////////////////////
+
+script_text += "GRID MIL;\n"; // all script commands use mils as the dimensional unit
+script_text += "SET WIRE_BEND 2;\n"; // so wires will go from (x0 y0) to (x1 y1) without any bends inserted
+sprintf(tmp,"CHANGE DRILL %f;\n",u2mil(int(via_drill))); // set the via drill diameter
+script_text += tmp;
+undo_text += "GRID MIL;\n"; // all script commands use mils as the dimensional unit
+undo_text += "SET SELECT_FACTOR 0;\n";  // prevent inadvertent selection of unrelated components during undo
+
+board(B)
+{
+	B.elements(E)
+	{
+		if(E.name != part_id) continue;	// skip anything but the requested part
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Process the BGA pad array to find the size of the pads, row and column separation,
+		// the number of rows and columns.
+		/////////////////////////////////////////////////////////////////////////////////////////
+
+		// untranslate the BGA pads back to library coordinates
+		real	x[], y[];
+		int	i = 0;
+		E.package.contacts(C)
+		{
+			x[i]	= untranslate_x(C.x,C.y,E);
+			y[i]	= untranslate_y(C.x,C.y,E);
+			pad_size = max(pad_size,max(C.smd.dx,C.smd.dy));
+if(debug)
+{
+			sprintf(tmp,"%s: %f %f %s\n",C.name,x[i],y[i],C.smd.signal);
+			debug_text += tmp;
+}
+			i++;
+		}
+
+		if(i == 0)
+		{
+			error_text += "ERROR: No pads found in the BGA package\n";
+			num_errors++;
+			break;
+		}
+
+		// sort the X and Y coordinates of the pads so we can determine row and column spacing
+		// and the number of rows and columns
+		sort(i,x);
+		sort(i,y);
+
+		// look at the clustering of the X and Y coords to detect row and columns
+		int	num_cols=0, num_rows=0;
+		real	coord_tolerance = pad_size;  // rows, columns can't be closer than this
+		col_separation = x[i-1]-x[0]; // initialize to maximum possible value
+		row_separation = y[i-1]-y[0]; // initialize to maximum possible value
+		for(int j=1; j<i; j++)
+		{
+			if(abs(x[j]-x[j-1]) > coord_tolerance)
+			{
+				num_cols++;
+				col_separation = min(col_separation,abs(x[j]-x[j-1]));
+			}
+			if(abs(y[j]-y[j-1]) > coord_tolerance)
+			{
+				num_rows++;
+				row_separation = min(row_separation,abs(y[j]-y[j-1]));
+			}
+		}
+		num_cols++;
+		num_rows++;
+
+		// determine the number of wires that can be routed between row and columns of BGA pads on the top layer
+		int num_top_col_tracks = int((col_separation-pad_size-trace_space)/(trace_width+trace_space));
+		int num_top_row_tracks = int((row_separation-pad_size-trace_space)/(trace_width+trace_space));
+		// determine the number of wires that can be routed between row and columns of vias on lower layers
+		int num_lower_col_tracks = int((col_separation-via_diameter-trace_space)/(trace_width+trace_space));
+		int num_lower_row_tracks = int((row_separation-via_diameter-trace_space)/(trace_width+trace_space));
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Set the number of usable routing tracks in rows and columns of top and lower layers.
+		/////////////////////////////////////////////////////////////////////////////////////////
+		for(int l=top_layer+1; l<=bot_layer; l++)
+		{
+			if(use_layer[l])
+			{
+				num_row_tracks_per_layer[l] = num_lower_row_tracks;
+				num_col_tracks_per_layer[l] = num_lower_col_tracks;
+			}
+		}
+		if(use_layer[top_layer])
+		{
+			num_row_tracks_per_layer[top_layer] = num_top_row_tracks;
+			num_col_tracks_per_layer[top_layer] = num_top_col_tracks;
+		}
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Determine the quadrant of each BGA pad and create the fanout routing for it.
+		/////////////////////////////////////////////////////////////////////////////////////////
+
+		// determine the top, bottom, left, right boundary of BGA pad array and its centroid
+		real top = y[i-1];
+		real bottom = y[0];
+		real left = x[0];
+		real right = x[i-1];
+		real center_x = (right-left)/2;
+		real center_y = (top-bottom)/2;
+
+		E.package.contacts(C)
+		{
+			// skip unconnected BGA pads
+			if(C.smd.signal=="")
+				continue;
+
+			// determine the quadrant for the BGA pad within the array
+			real px = untranslate_x(C.x,C.y,E);
+			real py = untranslate_y(C.x,C.y,E);
+			int bot= (py-bottom)<(top-py) ? 1:0; // in bottom or top half
+			int lft= (px-left)<(right-px) ? 1:0; // in left or right half
+
+			// determine the distance of the BGA pad from the closest edge of the pad array
+			int do_col_route;
+			int depth;
+			if(bot && lft)		// bottom-left quadrant
+			{
+				// fanout through a column if closer to the bottom edge, else fanout through a row
+				do_col_route = (px-left)>(py-bottom) ? 1:0;
+
+				// depth of the pad is distance (in rows or columns) to the closest edge of the pad array
+				depth = do_col_route ? (py-bottom)/row_separation : (px-left)/col_separation;  
+			}
+			else if(!bot && lft)	// top-left quadrant
+			{
+				// fanout through a column if closer to the top edge, else fanout through a row
+				do_col_route = (px-left)>(top-py) ? 1:0;
+
+				// depth of the pad is distance (in rows or columns) to the closest edge of the pad array
+				depth = do_col_route ? (top-py)/row_separation : (px-left)/col_separation;  
+			}
+			else if(bot && !lft)	// bottom-right quadrant
+			{
+				// fanout through a column if closer to the bottom edge, else fanout through a row
+				do_col_route = (right-px)>(py-bottom) ? 1:0;
+
+				// depth of the pad is distance (in rows or columns) to the closest edge of the pad array
+				depth = do_col_route ? (py-bottom)/row_separation : (right-px)/col_separation;  
+			}
+			else // (!bot && !lft)	// top-right quadrant
+			{
+				// fanout through a column if closer to the top edge, else fanout through a row
+				do_col_route = (right-px)>(top-py) ? 1:0;
+
+				// depth of the pad is distance (in rows or columns) to the closest edge of the pad array
+				depth = do_col_route ? (top-py)/row_separation : (right-px)/col_separation;  
+			}
+			depth = int(depth);
+
+			// create the fanout routing for the BGA pad
+			route_fanout(C,E,depth,bot,lft,do_col_route);
+
+if(debug)
+{
+			sprintf(tmp,"%s: %f %f %s %s %s %d\n",C.name,px,py,bot?"Lower":"Upper",lft?"Left":"Right",do_col_route?"V":"H",depth);
+			debug_text += tmp;
+}
+		}
+if(debug)
+{
+		sprintf(tmp,"rows: num=%d separation=%f\n",num_rows,row_separation);
+		debug_text += tmp;
+		sprintf(tmp,"cols: num=%d separation=%f\n",num_cols,col_separation);
+		debug_text += tmp;
+		sprintf(tmp,"pad size: %f\n",pad_size);
+		debug_text += tmp;
+		sprintf(tmp,"col tracks: top=%d  lower=%d\n",num_top_col_tracks,num_lower_col_tracks);
+		debug_text += tmp;
+		sprintf(tmp,"row tracks: top=%d  lower=%d\n",num_top_row_tracks,num_lower_row_tracks);
+		debug_text += tmp;
+}
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Finalize the script.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+script_text += "GRID LAST;\n";
+undo_text += "GRID LAST;\n";
+undo_text += "SET SELECT_FACTOR 0.02;\n";
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Execute the script if no errors were found.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+finish_up();
+

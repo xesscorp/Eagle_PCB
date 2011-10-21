@@ -1,0 +1,281 @@
+#usage "<b>Creates a drawing template</b>\n"
+       "<p>"
+       "Generates a ISO paper standard frame with info field."
+       "<p>"
+       "<author>Author: Richard Bekking <richard.bekking@gmail.com></author>"
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+real offset_x[] = {181, 94, 302, 179};
+real offset_y[] = {6,   6,  8,   8};
+
+string cmd = "";
+
+// User info
+string company = "<logo of your company>";
+string engineer = "<author>";
+string checked = "<name>";
+string aproved = "<name>";
+string description1 = "<descriptive text>";
+string description2 = "<descriptive text>";
+string description3 = "<descriptive text>";
+string copyright = "Copyright(C) <year> <company>";
+int copyright_select = 0;
+
+// Paper style
+string papersize[] = {"A4", "A3", "A2"};
+int papersize_select = 0;
+string orientation[] = {"L", "P"};
+int orientation_select = 0;
+string perforation[] = {"none", "top", "left", "right", "bottom"};
+string perforation_code[] = {"", "-HT", "-HL", "-HR", "-HB"};
+int perforation_select = 0;
+int clearance = 8;
+
+int result;
+
+string realToStr(real number)
+{	
+	string retVal = "";
+	sprintf(retVal, "%f", number);
+	return retVal;
+}
+
+string intToStr(int number)
+{	
+	string retVal = "";
+	sprintf(retVal, "%d", number);
+	return retVal;
+}
+
+string drawLine(real x, real y, real x2, real y2)
+{
+	string cmd = "";
+	cmd += "WIRE (" + realToStr(x) + " " + realToStr(y) + ") (" + realToStr(x2) + " " + realToStr(y2) + ");";
+	return cmd;
+}
+string drawBox(real x, real y, real width, real height, int style)
+{
+	string cmd = "";
+	real y2 = y + height;
+	real x2 = x + width;
+
+	switch(style)
+	{
+		case 0: cmd += "CHANGE STYLE Continuous;"; break;
+		case 1: cmd += "CHANGE STYLE LongDash;"; break;
+		case 2: cmd += "CHANGE STYLE ShortDash;"; break;
+		case 3: cmd += "CHANGE STYLE DashDot;"; break;
+		default: break;
+	}
+
+	cmd += drawLine(x, y, x, y2);
+	cmd += drawLine(x, y2, x2, y2);
+	cmd += drawLine(x2, y2, x2, y);
+	cmd += drawLine(x2, y, x, y);
+	return cmd;
+}
+
+string drawStamp(real x, real y, int papersize,
+		string company,
+		string engineer,
+		string checked,
+		string aproved,
+		string description1,
+		string description2,
+		string description3,
+		string revision,
+		string copyright)
+{
+	string cmd = "";
+
+	cmd += drawBox(x, y, 110, 31, 0);
+	cmd += drawLine(x, y + 4, x + 110, y + 4);
+	cmd += drawLine(x, y + 12, x + 110, y + 12);
+	cmd += drawLine(x, y + 18, x + 110, y + 18);
+	cmd += drawLine(x, y + 22, x + 110, y + 22);
+
+	cmd += drawLine(x + 11, y + 22, x + 11, y + 31);
+	cmd += drawLine(x + 21, y, x + 21, y + 22);
+	cmd += drawLine(x + 66, y + 12, x + 66, y + 22);
+	cmd += drawLine(x + 77, y + 18, x + 77, y + 22);
+	cmd += drawLine(x + 82, y + 12, x + 82, y + 18);
+	cmd += drawLine(x + 84, y, x + 84, y + 4);
+	cmd += drawLine(x + 90, y + 4, x + 90, y + 12);
+	if (board)
+	{
+		cmd += drawLine(x + 97, y + 22, x + 97, y + 31);
+	}
+	cmd += drawLine(x + 101, y, x + 101, y + 12);
+
+	cmd += "CHANGE FONT vector;";
+	cmd += "CHANGE SIZE 1.778; CHANGE RATIO 8;";
+	cmd += "TEXT Size: R0 (" + realToStr(x + 2) + " " + realToStr(y + 28) + ");";
+	cmd += "CHANGE SIZE 2.54; CHANGE RATIO 10;";
+	cmd += "TEXT A" + intToStr(4-papersize) + " R0 (" + realToStr(x + 3) + " " + realToStr(y + 24) + ");";
+	cmd += "CHANGE SIZE 1.778; CHANGE RATIO 8;";
+	cmd += "TEXT Engineer: R0 (" + realToStr(x + 2) + " " + realToStr(y + 19) + ");";
+	cmd += "TEXT Date: R0 (" + realToStr(x + 68) + " " + realToStr(y + 19) + ");";
+	cmd += "TEXT Checked: R0 (" + realToStr(x + 2) + " " + realToStr(y + 15) + ");";
+	cmd += "TEXT Aproved: R0 (" + realToStr(x + 68) + " " + realToStr(y + 15) + ");";
+	cmd += "TEXT Description: R0 (" + realToStr(x + 2) + " " + realToStr(y + 9) + ");";
+	cmd += "TEXT Page: R0 (" + realToStr(x + 92) + " " + realToStr(y + 9) + ");";
+	cmd += "TEXT Filename: R0 (" + realToStr(x + 2) + " " + realToStr(y + 1) + ");";
+	cmd += "TEXT Revision: R0 (" + realToStr(x + 86) + " " + realToStr(y + 1) + ");";
+
+	// DATA
+	cmd += "CHANGE SIZE 2.54; CHANGE RATIO 10;";
+	cmd += "TEXT " + company + " R0 (" + realToStr(x + 15) + " " + realToStr(y + 25) + ");";
+	cmd += "CHANGE SIZE 1.778; CHANGE RATIO 8;";
+	cmd += "TEXT " + engineer + " R0 (" + realToStr(x + 23) + " " + realToStr(y + 19) + ");";
+	cmd += "TEXT >LAST_DATE_TIME R0 (" + realToStr(x + 79) + " " + realToStr(y + 19) + ");";
+	cmd += "TEXT " + checked + " R0 (" + realToStr(x + 23) + " " + realToStr(y + 15) + ");";
+	cmd += "TEXT " + aproved + " R0 (" + realToStr(x + 84) + " " + realToStr(y + 15) + ");";
+	cmd += "TEXT '" + description1 + "' R0 (" + realToStr(x + 23) + " " + realToStr(y + 9) + ");";
+	cmd += "TEXT '" + description2 + "' R0 (" + realToStr(x + 23) + " " + realToStr(y + 7) + ");";
+	cmd += "TEXT '" + description3 + "' R0 (" + realToStr(x + 23) + " " + realToStr(y + 5) + ");";
+
+	if (board)
+	{
+		cmd += "TEXT 1/1 (" + realToStr(x + 103) + " " + realToStr(y + 9) + ");";
+		cmd += "TEXT Scale: R0 (" + realToStr(x + 99) + " " + realToStr(y + 28) + ");";
+		cmd += "CHANGE SIZE 2.54; CHANGE RATIO 10;";
+		cmd += "TEXT 1:1 R0 (" + realToStr(x + 101) + " " + realToStr(y + 24) + ");";
+		cmd += "CHANGE SIZE 1.778; CHANGE RATIO 8;";
+	}
+	else
+	{
+		cmd += "TEXT >SHEET R0 (" + realToStr(x + 103) + " " + realToStr(y + 9) + ");";
+	}
+
+	cmd += "TEXT >DRAWING_NAME R0 (" + realToStr(x + 23) + " " + realToStr(y + 1) + ");";
+	cmd += "TEXT " + revision + " R0 (" + realToStr(x + 103) + " " + realToStr(y + 1) + ");";
+	cmd += "TEXT " + copyright + " R0 (" + realToStr(x + 2) + " " + realToStr(y + 32) + ");";
+
+	return cmd;
+}
+
+string drawFrame(int papersize, int orientation, int perforation, int clearance)
+{
+	string cmd = "";
+	int x = 0, y = 0, w = 0, h = 0;
+	int width = 0, height = 0;
+	int spacing = 24 - clearance;	// mm
+	cmd += "GRID MM 1 1;";
+	cmd += "CHANGE WIDTH 0.254;";
+	cmd += "LAYER 100 DocFrame;";
+	cmd += "SET COLOR_LAYER 100 BLACK;";
+
+	switch(perforation)
+	{
+		case 0:	break;
+		case 1: // TOP
+			h = spacing;
+			break;
+		case 2: // LEFT
+			x = spacing; w = spacing;
+			break;
+		case 3: // RIGHT
+			w = spacing;
+			break;
+		case 4: // BOTTOM
+			y = spacing; h = spacing;
+			break;
+	}
+
+	switch(papersize)
+	{
+		case 0: switch(orientation)	// A4
+			{
+				case 0: width = 297; height = 210; break;
+				case 1: width = 210; height = 297; break;
+			}
+			break;
+		case 1: switch(orientation)	// A3
+			{
+				case 0: width = 420; height = 297; break;
+				case 1: width = 297; height = 420; break;
+			}
+			break;
+		case 2: switch(orientation)	// A2
+			{
+				case 0: width = 594; height = 420; break;
+				case 1: width = 420; height = 594; break;
+			}
+			break;
+	}		
+	
+	if (copyright_select == 0) copyright = "";
+	cmd += drawBox(0, 0, width, height, 2); cmd += drawBox(clearance  + x, clearance  + y, width - (2*clearance ) - w, height - (2*clearance ) - h, 0);
+	cmd += drawStamp(width - (110 + clearance) - (w - x), clearance  + y, papersize, company, engineer, checked, aproved, description1, description2, description3, "1.0", copyright);
+	cmd += "GRID DEFAULT;";
+	return cmd;
+}
+
+result = dlgDialog("Insert drawing frame") {
+	dlgStretch(0);
+	dlgHBoxLayout 
+	{	
+		dlgGroup("Drawing data")
+		{
+			dlgGridLayout 
+			{
+				dlgCell(0, 0) dlgLabel("&Company");
+				dlgCell(0, 1) dlgStringEdit(company);
+				dlgCell(1, 0) dlgLabel("&Engineer");	
+				dlgCell(1, 1) dlgStringEdit(engineer);
+				dlgCell(2, 0) dlgLabel("&Checked");
+				dlgCell(2, 1) dlgStringEdit(checked);
+				dlgCell(3, 0) dlgLabel("&Aproved");
+				dlgCell(3, 1) dlgStringEdit(aproved);
+
+				dlgCell(4, 0) dlgLabel("");
+
+				dlgCell(5, 0) dlgLabel("&Description");
+				dlgCell(5, 1) dlgStringEdit(description1);
+				dlgCell(6, 1) dlgStringEdit(description2);
+				dlgCell(7, 1) dlgStringEdit(description3);
+
+				dlgCell(8, 0) dlgLabel("");
+
+				dlgCell(9, 0) dlgCheckBox("Copyright", copyright_select);
+				dlgCell(9, 1) dlgStringEdit(copyright);
+				dlgCell(10, 1) dlgSpacing(200);
+			}
+		}
+
+		dlgGroup("Paper settings")
+		{
+			dlgLabel("Size");
+			dlgComboBox(papersize, papersize_select);
+
+			dlgGroup("Orientation")
+			{
+				dlgRadioButton("&Landscape", orientation_select);
+				dlgRadioButton("&Portrait", orientation_select);
+			}
+
+			dlgLabel("Perforation space");
+			dlgComboBox(perforation, perforation_select);
+			dlgLabel("Edge clearance [mm]");
+			dlgSpinBox(clearance, 5, 24);
+		}
+	}
+
+	dlgHBoxLayout
+	{
+		dlgStretch(0);
+		dlgPushButton("+Ok") dlgAccept();
+		dlgPushButton("Reset") dlgReset();
+		dlgPushButton("-Cancel") dlgReject();
+	}
+};
+
+if (!result) exit(0);
+
+int i = (papersize_select * 2) + orientation_select;
+
+cmd += drawFrame(papersize_select, orientation_select, perforation_select, clearance);
+cmd += "WINDOW FIT;";
+cmd += "SET ;";
+exit(cmd);

@@ -1,0 +1,444 @@
+/**************** EAGLE User Language Program *****************************
+This Program generates an SCR file in the design directory which creates
+the original libraries contained in a schematic or board.
+
+Usage:
+
+1. Set the library path to a directory which doesn't contain libraries
+   (e.g. remove libraries from design path and set library path to
+   design path).
+
+2. Load schematic or board. Type "SET USED_LAYERS ALL". Check if there are
+   identically named layers (can occur if generated with former EAGLE
+   version) and rename if necessary. RUN this UL program.
+
+3. Close any open library and execute the newly generated SCR file
+   "drawingname.SCR" with the SCRIPT command.
+   If a schematic has been loaded, this will create all of the Device
+   libraries stored in the schematic.
+   If a board has been loaded, this will create all of the Package
+   libraries stored in the board.
+   Before a library is saved the user has to confirm it.
+
+4. If the file "LOGFILE.TXT" stored in the design directory contains
+   messages or if there were error messages during the execution of the
+   SCR file, check the SCR file and edit it manually if necessary.
+
+Known problems:
+
+Files created with former versions or libraries can contain multiple
+libraries with the same name. Most likely the SCR file will then produce
+error messages (reading components which are already present!).
+Group/Cut/Paste the whole schematic or board to a new drawing might
+help.
+
+Boards can contain different versions of devices/symbols/packages with
+identical Device names (e.g. when REPLACE has been used or components
+come from an old library). In this case the name of the first copy will
+remain unchanged while the next copies are renamed according to the
+messages in LOGFILE.TXT.
+
+If forbidden layers are used in symols or packages (due to erroneous
+libraries created with an old version), the program will move the
+objects to new layers and indicate the action in "LOGFILE.TXT".
+
+If there are pins on pins or pads on pads (due to erroneous libraries
+created with an old version), an error message will occur during the
+execution of the SCRIPT command. Please remove the pad/pin manually from
+the SCR file.
+**************************************************************************/
+
+string PrevName  = "";
+string CurrentLbrName   = "";
+int    NameIndex        = 0;
+int    IsPackage        = 1;
+
+void OutputLayers(UL_LAYER L)
+{
+  int l = L.number;
+  if ((l<=49) || ((l>=91) && (l<=96)) ||(l>=100))
+     printf("Layer %d %s;\n", L.number, L.name); 
+}
+
+void CreateHeader(UL_LIBRARY LBR)
+{
+  LBR.layers(L) OutputLayers(L);
+  printf("Set Wire_style 2;\nSet Select_factor 0;\nSet Undo_log off;\n");  
+  printf("Grid 0.05 inch;\n");
+  printf("Display All;\n");
+}
+
+void CreateTrailer(void)
+{
+  printf("Set Undo_log On;\nSet Select_factor 0.02;\n");
+}
+
+void PrintMovedLayer(int LNr, int Offset)
+{
+printf("Layer %d L$%d;\n", LNr + Offset, LNr + Offset);
+printf("Layer %d;\n", LNr + Offset);
+output ("LOGFILE.TXT", "a")
+  printf("%s.LBR: Moved Object from Layer %d to Layer %d\n",
+          CurrentLbrName, LNr, LNr + Offset);
+}
+
+void PrintValidLayer(int LNr)
+{
+/* Move the following layers to
+    always   50-90 to 150-190
+    always   97-99 to 191-193
+    package  91-96 to 194-199
+    symbol    1-49 to 200-248
+*/
+int AlwOffset1 = 100;
+int AlwOffset2 =  94;
+int PackOffset = 103;
+int SymbOffset = 199;
+if ((LNr >= 50) && (LNr <= 90))
+   PrintMovedLayer(LNr, AlwOffset1);
+if ((LNr >= 97) && (LNr <= 99))
+   PrintMovedLayer(LNr, AlwOffset2);
+if (IsPackage) {
+   if ((LNr >= 91) && (LNr <= 96))  /* forbidden layers */
+      PrintMovedLayer(LNr, PackOffset);
+   else if ((LNr<=49) || (LNr >=100))
+      printf("Layer %d;\n", LNr);
+   }
+else {              /* symbol */
+   if (LNr <= 49)   /* forbidden layers */
+      PrintMovedLayer(LNr, SymbOffset);
+   else if (((LNr>=91) && (LNr <=96)) || (LNr>=100))
+      printf("Layer %d;\n", LNr);
+   };
+}
+
+void DrawArc(UL_ARC A)
+{
+  PrintValidLayer(A.layer);
+  printf("Arc CCW %f (%f %f) (%f %f) (%f %f);\n",
+              u2inch(A.width),
+              u2inch(A.x1), u2inch(A.y1),
+              u2inch(A.xc + A.xc - A.x1), u2inch(A.yc + A.yc - A.y1),
+              u2inch(A.x2), u2inch(A.y2));
+}
+
+void DrawCircle(UL_CIRCLE C)
+{ 
+  PrintValidLayer(C.layer);
+  printf("Circle %f (%f %f) (%f %f);\n",
+            u2inch(C.width),
+            u2inch(C.x), u2inch(C.y),
+            u2inch(C.x + C.radius), u2inch(C.y)); 
+}
+
+void DrawWire(UL_WIRE W)
+{
+  PrintValidLayer(W.layer);
+  printf("Wire %f (%f %f) (%f %f);\n", 
+          u2inch(W.width), u2inch(W.x1), u2inch(W.y1), u2inch(W.x2), u2inch(W.y2));
+}
+
+void DrawRectangle(UL_RECTANGLE R)
+{
+  PrintValidLayer(R.layer);
+  printf("Rect (%f %f) (%f %f);\n",
+           u2inch(R.x1), u2inch(R.y1),
+           u2inch(R.x2), u2inch(R.y2));
+}
+
+
+void DrawContact(UL_CONTACT C)
+{
+  string ShapeString;
+  if (C.pad) {
+    switch(C.pad.shape) {
+      case PAD_SHAPE_SQUARE    : ShapeString = "Square";  break;
+      case PAD_SHAPE_ROUND     : ShapeString = "Round";   break;
+      case PAD_SHAPE_OCTAGON   : ShapeString = "Octagon"; break;
+      case PAD_SHAPE_XLONGOCT  : ShapeString = "Xlongoct";break;
+      case PAD_SHAPE_YLONGOCT  : ShapeString = "Ylongoct";
+       }
+     printf("Change Drill %f;\n", u2inch(C.pad.drill));
+     printf("Pad %f %s '%s' (%f %f);\n",
+               u2inch(C.pad.diameter),
+               ShapeString, C.pad.name,
+               u2inch(C.pad.x), u2inch(C.pad.y));
+     }
+  else if (C.smd) {
+    PrintValidLayer(C.smd.layer);
+    printf("SMD %f %f '%s' (%f %f);\n",
+             u2inch(C.smd.dx), u2inch(C.smd.dy),
+             C.smd.name,
+             u2inch(C.smd.x), u2inch(C.smd.y))
+             ; 
+     }
+}
+
+void DrawText(UL_TEXT T)
+{
+  string s = "R0";
+  if (T.angle == 90)  (s = "R90");
+  if (T.angle == 180) (s = "R180");
+  if (T.angle == 270) (s = "R270");
+  PrintValidLayer(T.layer);
+  printf("Change Size %f;\n", u2inch(T.size));
+  printf("Change Ratio %d;\n", T.ratio);
+  printf("Text '%s' %s (%f %f);\n",
+           T.value, s, u2inch(T.x), u2inch(T.y)
+           );
+  if (T.mirror) {printf("Mirror (%f %f);\n", u2inch(T.x), u2inch(T.y));};
+}
+
+void DrawHole(UL_HOLE H)
+{
+  printf("Change Drill %f;\n", u2inch(H.drill));
+  printf("Hole (%f %f);\n", u2inch(H.x), u2inch(H.y));
+}
+
+void DrawPolygon(UL_POLYGON PL)
+{
+  PrintValidLayer(PL.layer);
+  printf("Change Isolate %f;\n", u2inch(PL.isolate));
+  printf("Change Spacing %f;\n", u2inch(PL.spacing));
+  if (PL.orphans) 
+     printf("Change Orphans On;\n");
+  else
+     printf("Change Orphans Off;\n");
+  if (PL.thermals) 
+     printf("Change Thermals On;\n");
+  else
+     printf("Change Thermals Off;\n");
+  if (PL.pour == POLYGON_POUR_SOLID) 
+     printf("Change Pour Solid;\n");
+  else
+     printf("Change Pour Hatch;\n");
+  printf("Polygon %f ", u2inch(PL.width));
+  PL.wires(W) {
+    printf("(%f %f) ", u2inch(W.x1), u2inch(W.y1)); /*start coord.*/
+    break;
+    };
+  PL.wires(W) {
+    printf("(%f %f) ", u2inch(W.x2), u2inch(W.y2));
+    };
+  printf(";\n");
+}
+
+void DrawPin(UL_PIN P)
+{
+  string DIR = "", FUNC = "", LEN = "", VIS = "", ANGLE = "R0";
+  if (P.angle == 90)  (ANGLE  = "R90");
+  if (P.angle == 180) (ANGLE  = "R180");
+  if (P.angle == 270) (ANGLE  = "R270");
+
+  if (P.function == PIN_FUNCTION_FLAG_NONE)  (FUNC = "None");
+  if (P.function == PIN_FUNCTION_FLAG_DOT)   (FUNC  = "Dot");
+  if (P.function == PIN_FUNCTION_FLAG_CLK)   (FUNC  = "Clk");
+  if (P.function == (PIN_FUNCTION_FLAG_DOT | PIN_FUNCTION_FLAG_CLK))
+                                             (FUNC  = "DotClk");
+
+  if (P.visible == PIN_VISIBLE_FLAG_OFF)    (VIS  = "Off");
+  if (P.visible == PIN_VISIBLE_FLAG_PIN)    (VIS  = "Pin");
+  if (P.visible == PIN_VISIBLE_FLAG_PAD)    (VIS  = "Pad");
+  if (P.visible == (PIN_VISIBLE_FLAG_PIN | PIN_VISIBLE_FLAG_PAD))
+                                            (VIS  = "Both");
+
+  switch(P.direction) {
+    case PIN_DIRECTION_NC  : DIR = "NC";  break;
+    case PIN_DIRECTION_IN  : DIR = "In";  break;
+    case PIN_DIRECTION_OUT : DIR = "Out"; break;
+    case PIN_DIRECTION_IO  : DIR = "I/O"; break;
+    case PIN_DIRECTION_OC  : DIR = "OC";  break;
+    case PIN_DIRECTION_PWR : DIR = "Pwr"; break;
+    case PIN_DIRECTION_PAS : DIR = "Pas"; break;
+    case PIN_DIRECTION_HIZ : DIR = "Hiz"; break;
+    case PIN_DIRECTION_SUP : DIR = "Sup";
+    }
+
+  switch(P.length) {
+    case PIN_LENGTH_POINT  : LEN = "Point";  break;
+    case PIN_LENGTH_SHORT  : LEN = "Short";  break;
+    case PIN_LENGTH_MIDDLE : LEN = "Middle"; break;
+    case PIN_LENGTH_LONG   : LEN = "Long";
+    }
+
+  printf("Pin '%s' %s %s %s %s %s %d (%f %f);\n",
+          P.name, 
+          DIR, FUNC, LEN, ANGLE, VIS, P.swaplevel,
+          u2inch(P.x), u2inch(P.y)
+        );
+
+}
+
+void DrawSymbol(UL_SYMBOL S)
+{
+  IsPackage = 0;
+  S.circles(C)    DrawCircle(C);
+  S.rectangles(R) DrawRectangle(R);
+  S.wires(W)      DrawWire(W);
+  S.arcs(A)       DrawArc(A);
+  S.pins(P)       DrawPin(P);
+  S.texts(T)      DrawText(T);
+  S.polygons(PL)  DrawPolygon(PL);
+}
+
+void DrawPackage(UL_PACKAGE P)
+{
+  IsPackage = 1;
+  P.arcs(A)       DrawArc(A);
+  P.circles(C)    DrawCircle(C);
+  P.wires(W)      DrawWire(W);
+  P.rectangles(R) DrawRectangle(R);
+  P.contacts(C)   DrawContact(C);
+  P.texts(T)      DrawText(T);
+  P.holes(H)      DrawHole(H);
+  P.polygons(PL)  DrawPolygon(PL); 
+}
+
+void DrawDevice(UL_DEVICE D)
+{
+  string GateAddlevel;
+  if (D.package) printf("Package %s;\n", D.package.name);
+  printf("Value %s;\n", D.value);
+  printf("Prefix %s;\n", D.prefix);
+  D.gates(G) {
+    switch (G.addlevel) {
+      case GATE_ADDLEVEL_NEXT    : GateAddlevel = "Next";    break;
+      case GATE_ADDLEVEL_MUST    : GateAddlevel = "Must";    break;
+      case GATE_ADDLEVEL_CAN     : GateAddlevel = "Can";     break;
+      case GATE_ADDLEVEL_REQUEST : GateAddlevel = "Request"; break;
+      case GATE_ADDLEVEL_ALWAYS  : GateAddlevel = "Always";
+      };
+    printf("Change Addlevel  %s;\n", GateAddlevel);
+    printf("Change Swaplevel %d;\n", G.swaplevel);
+    printf("Add '%s' %s (%f %f);\n",
+              G.name, G.symbol.name, 
+              u2inch(G.x), u2inch(G.y));
+
+    G.symbol.pins(P) {
+      if (D.package) 
+      printf("Connect %s.%s %s;\n", G.name, P.name, P.contact.name);
+         
+      }       
+    }
+}
+
+string StripName(string s, int l)
+{ 
+  string Name = s;
+  if (strlen(s) >= (l - 3)) {
+     Name = strsub(s, 0, 5); 
+     }
+  return Name;
+}
+
+void OutputUnmistakablePackages (UL_LIBRARY LBR)
+{
+  PrevName = "";
+  printf("Open %s.LBR;\n", LBR.name);
+  CreateHeader(LBR);
+  LBR.packages(P) {
+    if (PrevName != P.name) {
+       NameIndex = 0;
+       printf("Edit %s.PAC;\n", P.name);
+       DrawPackage(P);
+       }
+    else {
+       NameIndex = NameIndex + 1;
+       printf("Edit %s$%02d.PAC;\n",
+              StripName(P.name, PACKAGE_NAME_LENGTH),
+              NameIndex);
+       output ("LOGFILE.TXT", "a")
+       printf("%s.LBR: Renamed %s.PAC to %s$%02d.PAC\n",
+               LBR.name, P.name,
+               StripName(P.name, PACKAGE_NAME_LENGTH),
+               NameIndex);
+       DrawPackage(P);
+       }
+    PrevName = P.name;
+    }
+}
+
+void OutputUnmistakableSymbols (UL_LIBRARY LBR)
+{
+  PrevName = "";
+  LBR.symbols(S) {
+    if (PrevName != S.name) {
+       NameIndex = 0;
+       printf("Edit %s.SYM;\n", S.name);
+       DrawSymbol(S);
+       }
+    else {
+       NameIndex = NameIndex + 1;
+       printf("Edit %s$%02d.SYM;\n",
+              StripName(S.name, SYMBOL_NAME_LENGTH),
+              NameIndex);
+       output ("LOGFILE.TXT", "a")
+       printf("%s.LBR: Renamed %s.SYM to %s$%02d.SYM\n",
+               LBR.name, S.name,
+               StripName(S.name, SYMBOL_NAME_LENGTH),
+               NameIndex);
+       DrawSymbol(S);
+       }
+    PrevName = S.name;
+    }
+}
+
+void OutputUnmistakableDevices (UL_LIBRARY LBR)
+{
+  PrevName = "";
+  LBR.devices(D) {
+    if (PrevName != D.name) {
+       NameIndex = 0;
+       printf("Edit %s.DEV;\n", D.name);
+       DrawDevice(D);
+       }
+    else {
+       NameIndex = NameIndex + 1;
+       printf("Edit %s$%02d.DEV;\n",
+              StripName(D.name, DEVICE_NAME_LENGTH),
+              NameIndex);
+       output ("LOGFILE.TXT", "a")
+       printf("%s.LBR: Renamed %s.DEV to %s$%02d.DEV\n",
+               LBR.name, D.name,
+               StripName(D.name, DEVICE_NAME_LENGTH),
+               NameIndex);
+       DrawDevice(D);
+       }
+    PrevName = D.name;
+    }
+}
+
+
+if (board) board(B) {
+   output ("LOGFILE.TXT");
+   output(filename(filesetext(B.name, ".SCR")), "w") {
+     B.libraries(LBR) {
+       CurrentLbrName = LBR.name;
+       LBR.packages(PAC) {
+         OutputUnmistakablePackages(LBR);
+         break; /*only header*/
+         printf("Write;\n");  
+         }
+       }
+     CreateTrailer();
+     }
+   }
+
+if (schematic) schematic(SCH) {
+   output ("LOGFILE.TXT");
+   output(filename(filesetext(SCH.name, ".SCR")), "w") {
+     SCH.libraries(LBR) {
+       CurrentLbrName = LBR.name;
+       LBR.devices(DEV) {
+         OutputUnmistakablePackages(LBR);
+         OutputUnmistakableSymbols(LBR);
+         OutputUnmistakableDevices(LBR);
+         printf("Write\n");              /*user input for filename/path*/
+         break; /*only header*/
+         };
+       }
+     CreateTrailer();
+     }
+   }
+
+

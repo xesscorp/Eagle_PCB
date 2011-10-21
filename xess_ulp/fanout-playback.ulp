@@ -1,0 +1,362 @@
+#usage	"<b>Playback Part Fanout</b>\n"
+	"<p>"
+	"This ULP plays-back the recorded fanout wiring for a part."
+	"<p>"
+	"Usage:<p>"
+	"<blockquote>"
+	"1. Start this ULP within a board layout.<p>"
+	"2. Select the file with the recorded fanout.<p>"
+	"3. Enter the name of the part to be fanned-out.<p>"
+	"4. Click on OK.<p>"
+	"</blockquote>"
+	"Note:<p>"
+	"<blockquote>"
+	"This ULP outputs several '.scr' temporary files in the same directory as the project. "
+	"It does NOT automatically delete them.<p>"
+	"This ULP was tested on EAGLE standard ver 4.15 for Windows.<p>"
+	"</blockquote>"
+	"<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+#include "useful-routines.ulp"
+#include "xess-useful-routines.ulp"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Global variables and constants.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+// parameters calculated from the pad array
+real	pad_size;			// maximum dimension of BGA pads
+real	bbox_left;
+real	bbox_right;
+real	bbox_bottom;
+real	bbox_top;
+
+// fanout recording data structures
+int	num_wires=0, w_x1[], w_y1[], w_x2[], w_y2[], w_layer[], w_width[];
+int	num_vias=0, v_x[], v_y[], v_start[], v_end[], v_diameter[], v_drill[];
+int	num_points=0, p_x[], p_y[], p_layer_start[], p_layer_end[];
+string	w_net[], v_net[], p_net[];
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Subroutines.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////
+// Read and translate recorded fanout.
+//////////////////////////////////////////////////////////////////////////
+void read_fanout(string record_file, UL_ELEMENT E)
+{
+	string lines[];
+	int n_lines = fileread(lines, record_file);
+	if(n_lines == 0)
+		report_errors("Unable to open fanout recording file!");
+
+	num_wires = 0;
+	num_vias = 0;
+	for(int n=0; n<n_lines; n++)
+	{
+		int x,y,layer;
+
+		if(lines[n][0] == '#')
+			continue;
+		if(strstr(lines[n], "WIRE") == 0)
+		{
+			string wire_parts[];
+			int cnt = strsplit (wire_parts, lines[n], ' ');
+			if(cnt != 7)
+			{
+				sprintf(tmp,"ERROR: line %d of fanout recording file\n",n);
+				error_text += tmp;
+				num_errors++;
+			}
+			else
+			{
+				w_layer[num_wires] = mirror_layer(strtol(wire_parts[1]),E.mirror);
+				w_width[num_wires] = strtol(wire_parts[2]);
+				x = strtol(wire_parts[3]);
+				y = strtol(wire_parts[4]);
+				w_x1[num_wires] = translate_x(x,y,E);
+				w_y1[num_wires] = translate_y(x,y,E);
+				x = strtol(wire_parts[5]);
+				y = strtol(wire_parts[6]);
+				w_x2[num_wires] = translate_x(x,y,E);
+				w_y2[num_wires] = translate_y(x,y,E);
+				num_wires++;
+			}
+		}
+		if(strstr(lines[n], "VIA") == 0)
+		{
+			string via_parts[];
+			int cnt = strsplit (via_parts, lines[n], ' ');
+			if(cnt != 7)
+			{
+				sprintf(tmp,"ERROR: line %d of fanout recording file\n",n);
+				error_text += tmp;
+				num_errors++;
+			}
+			else
+			{
+				v_diameter[num_vias] = strtol(via_parts[1]);
+				v_drill[num_vias] = strtol(via_parts[2]);
+				v_start[num_vias] = mirror_layer(strtol(via_parts[3]),E.mirror);
+				v_end[num_vias] = mirror_layer(strtol(via_parts[4]),E.mirror);
+				x = strtol(via_parts[5]);
+				y = strtol(via_parts[6]);
+				v_x[num_vias] = translate_x(x,y,E);
+				v_y[num_vias] = translate_y(x,y,E);
+				num_vias++;
+			}
+		}
+	}
+	return;
+}
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+// Start of the main routine.
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+
+if(!board)
+	report_errors("Start this ULP from a board layout!");
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Get input parameters from the user.
+/////////////////////////////////////////////////////////////////////////////////////////
+int result = dlgDialog("Record Fanout")
+{
+	dlgHBoxLayout
+	{
+		dlgLabel("Part ID ");
+		dlgStringEdit(part_id);	// get the identifier for the part whose fanout will be recorded
+	}
+	record_file = dlgFileOpen("Select Fanout Recording File", get_project_path(), "*.record");
+
+	dlgHBoxLayout
+	{
+		dlgStretch(1);
+		dlgPushButton("+OK")    dlgAccept();
+		dlgPushButton("Cancel") dlgReject();
+		dlgStretch(1);
+	}
+};
+
+// abort if the cancel button was pressed or no file was selected
+if(result == 0 || record_file == "")
+	exit (0);
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Post-process the input parameters.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+// make sure part ID is in upper-case to match part IDs on board
+part_id = strupr(part_id);
+if(part_id == "")
+	report_errors("ERROR: missing part identifier\n");
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// initialize the script with global settings
+/////////////////////////////////////////////////////////////////////////////////////////
+
+script_text += "GRID MIL;\n"; // all script commands use mils as the dimensional unit
+script_text += "SET WIRE_BEND 2;\n"; // so wires will go from (x0 y0) to (x1 y1) without any bends inserted
+undo_text += "GRID MIL;\n"; // all script commands use mils as the dimensional unit
+undo_text += "SET SELECT_FACTOR 0;\n";  // prevent inadvertent selection of unrelated components during undo
+
+board(B)
+{
+	B.elements(E)
+	{
+		if(E.name != part_id) continue;	// skip anything but the requested part
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Get the fanout record and translate it to the origin of the selected part
+		/////////////////////////////////////////////////////////////////////////////////////////
+		read_fanout(record_file,E);
+		if(num_errors != 0)
+			break;
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Process the pads to get their coordinates and the signal they attach to.
+		/////////////////////////////////////////////////////////////////////////////////////////
+		num_points = 0;
+		E.package.contacts(C)
+		{
+			if(C.signal != "")
+			{
+				p_x[num_points] = C.x;
+				p_y[num_points] = C.y;
+				p_layer_start[num_points] = C.smd.layer;
+				p_layer_end[num_points] = C.smd.layer;
+				p_net[num_points] = C.signal;
+				num_points++;
+if(debug)
+{
+				sprintf(tmp,"%s: %s (%d %d) %d\n",C.name,C.smd.signal,C.x,C.y,C.smd.layer);
+				debug_text += tmp;
+}
+			}
+		}
+if(debug)
+{
+		sprintf(tmp,"%s: %d\n",E.name,num_points);
+		debug_text += tmp;
+}
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Attach the recorded fanout wires and vias to the part.
+		/////////////////////////////////////////////////////////////////////////////////////////
+		int do_pass = 1;
+		while(do_pass)
+		{
+			do_pass = 0;
+			for(int w=0; w<num_wires; w++)
+			{
+				if(w_net[w] != "")
+					continue;
+				for(int p=0; p<num_points; p++)
+				{
+					if(p_net[p] == "")
+						continue;
+					if(!between(p_layer_start[p],w_layer[w],p_layer_end[p]))
+						continue;
+					if(touches(w_x1[w],w_y1[w],1,w_width[w],p_x[p],p_y[p],1))
+					{
+						do_pass = 1;
+						w_net[w] = p_net[p];
+						w_x1[w] = p_x[p];
+						w_y1[w] = p_y[p];
+						p_x[num_points] = w_x1[w];
+						p_y[num_points] = w_y1[w];
+						p_layer_start[num_points] = p_layer_start[p];
+						p_layer_end[num_points] = p_layer_end[p];
+						p_net[num_points] = w_net[w];
+						num_points++;
+						p_x[num_points] = w_x2[w];
+						p_y[num_points] = w_y2[w];
+						p_layer_start[num_points] = w_layer[w];
+						p_layer_end[num_points] = w_layer[w];
+						p_net[num_points] = w_net[w];
+						num_points++;
+						break;
+					}
+					else if(touches(w_x2[w],w_y2[w],1,w_width[w],p_x[p],p_y[p],1))
+					{
+						do_pass = 1;
+						w_net[w] = p_net[p];
+						w_x2[w] = p_x[p];
+						w_y2[w] = p_y[p];
+						p_x[num_points] = w_x1[w];
+						p_y[num_points] = w_y1[w];
+						p_layer_start[num_points] = w_layer[w];
+						p_layer_end[num_points] = w_layer[w];
+						p_net[num_points] = w_net[w];
+						num_points++;
+						p_x[num_points] = w_x2[w];
+						p_y[num_points] = w_y2[w];
+						p_layer_start[num_points] = p_layer_start[p];
+						p_layer_end[num_points] = p_layer_end[p];
+						p_net[num_points] = w_net[w];
+						num_points++;
+						break;
+					}
+				}
+			}
+			for(int v=0; v<num_vias; v++)
+			{
+				if(v_net[v] != "")
+					continue;
+				for(int p=0; p<num_points; p++)
+				{
+					if(p_net[p] == "")
+						continue;
+					if(!between(v_start[v],p_layer_start[p],v_end[v])
+							&& !between(v_start[v],p_layer_end[p],v_end[v]))
+						continue;
+					if(touches(v_x[v],v_y[v],1,v_diameter[v],p_x[p],p_y[p],1))
+					{
+						do_pass = 1;
+						v_net[v] = p_net[p];
+						v_x[v] = p_x[p];
+						v_y[v] = p_y[p];
+						p_x[num_points] = v_x[v];
+						p_y[num_points] = v_y[v];
+						p_layer_start[num_points] = v_start[v];
+						p_layer_end[num_points] = v_end[v];
+						//p_layer[num_points] = v_start[v];
+						p_net[num_points] = v_net[v];
+						num_points++;
+						//p_x[num_points] = v_x[v];
+						//p_y[num_points] = v_y[v];
+						//p_layer[num_points] = v_end[v];
+						//p_net[num_points] = v_net[v];
+						//num_points++;
+						break;
+					}
+/*
+					else if(touches(v_x[v],v_y[v],v_end[v],v_diameter[v],p_x[p],p_y[p],p_layer[p]))
+					{
+						do_pass = 1;
+						v_net[v] = p_net[p];
+						v_x[v] = p_x[p];
+						v_y[v] = p_y[p];
+						p_x[num_points] = v_x[v];
+						p_y[num_points] = v_y[v];
+						p_layer[num_points] = v_start[v];
+						p_net[num_points] = v_net[v];
+						num_points++;
+						p_x[num_points] = v_x[v];
+						p_y[num_points] = v_y[v];
+						p_layer[num_points] = v_end[v];
+						p_net[num_points] = v_net[v];
+						num_points++;
+						break;
+					}
+*/
+				}
+			}
+		}
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Draw the fanout wires.
+		/////////////////////////////////////////////////////////////////////////////////////////
+		for(int w=0; w<num_wires; w++)
+			if(w_net[w] != "")
+				draw_wire(w_layer[w],w_net[w],w_width[w],w_x1[w],w_y1[w],w_x2[w],w_y2[w]);
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Draw the fanout vias.
+		/////////////////////////////////////////////////////////////////////////////////////////
+		for(int v=0; v<num_vias; v++)
+			if(v_net[v] != "")
+				draw_via(v_start[v],v_end[v],v_net[v],v_diameter[v],v_drill[v],v_x[v],v_y[v]);
+
+		break;
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Finalize the script.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+script_text += "GRID LAST;\n";
+undo_text += "GRID LAST;\n";
+undo_text += "SET SELECT_FACTOR 0.02;\n";
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Execute the script if no errors were found.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+finish_up();
+

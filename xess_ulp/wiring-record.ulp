@@ -1,0 +1,182 @@
+#usage	"<b>Record Part Fanout</b>\n"
+	"<p>"
+	"This ULP records the fanout wiring for a part."
+	"<p>"
+	"Usage:<p>"
+	"<blockquote>"
+	"1. Start this ULP within a board layout.<p>"
+	"2. Enter the name of the part whose fanout is to be stored.<p>"
+	"3. Click on OK.<p>"
+	"</blockquote>"
+	"Note:<p>"
+	"<blockquote>"
+	"This ULP outputs a '.record' file containing the fanout wiring in the same directory as the project.<p>"
+	"This ULP was tested on EAGLE standard ver 4.15 for Windows.<p>"
+	"</blockquote>"
+	"<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+#include "useful-routines.ulp"
+#include "xess-useful-routines.ulp"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Global variables and constants.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+// parameters calculated from the pad array
+real	bbox_left;
+real	bbox_right;
+real	bbox_bottom;
+real	bbox_top;
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Subroutines.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////
+// Record a wire.
+//////////////////////////////////////////////////////////////////////////
+void record_wire(UL_WIRE W, UL_ELEMENT E)
+{
+	if(W.layer > bot_layer || W.layer < top_layer)
+		return;
+	int layer = mirror_layer(W.layer,E.mirror);
+	int x1 = int(untranslate_x(W.x1,W.y1,E));	
+	int y1 = int(untranslate_y(W.x1,W.y1,E));	
+	int x2 = int(untranslate_x(W.x2,W.y2,E));	
+	int y2 = int(untranslate_y(W.x2,W.y2,E));	
+	sprintf(tmp,"WIRE %d %d %d %d %d %d\n",layer,W.width,x1,y1,x2,y2);
+	record_text += tmp;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Record a via.
+//////////////////////////////////////////////////////////////////////////
+void record_via(UL_VIA V, UL_ELEMENT E)
+{
+	int x = int(untranslate_x(V.x,V.y,E));	
+	int y = int(untranslate_y(V.x,V.y,E));
+	sprintf(tmp,"VIA %d %d %d %d %d %d\n",V.diameter[top_layer],V.drill,
+		mirror_layer(V.start,E.mirror),mirror_layer(V.end,E.mirror),x,y);
+	record_text += tmp;
+}
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+// Start of the main routine.
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+
+if(!board)
+	report_error("Start this ULP from a board layout!");
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Get input parameters from the user.
+/////////////////////////////////////////////////////////////////////////////////////////
+int result = dlgDialog("Record Fanout")
+{
+	dlgHBoxLayout
+	{
+		dlgLabel("Part ID ");
+		dlgStringEdit(part_id);	// get the identifier for the part whose fanout will be recorded
+	}
+	dlgHBoxLayout
+	{
+		dlgStretch(1);
+		dlgPushButton("+OK")    dlgAccept();
+		dlgPushButton("Cancel") dlgReject();
+		dlgStretch(1);
+	}
+};
+
+// abort if the cancel button was pressed
+if(result == 0)
+	exit (0);
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Post-process the input parameters.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+// make sure part ID is in upper-case to match part IDs on board
+part_id = strupr(part_id);
+if(part_id == "")
+	report_errors("ERROR: missing part identifier\n");
+
+board(B)
+{
+	B.elements(E)
+	{
+		if(E.name != part_id) continue;	// skip anything but the requested part
+
+		/////////////////////////////////////////////////////////////////////////////////////////
+		// Process the pads of the part to find their bounding box.
+		/////////////////////////////////////////////////////////////////////////////////////////
+
+		// untranslate the BGA pads back to library coordinates
+		bbox_left = E.x;
+		bbox_right = E.x;
+		bbox_bottom = E.y;
+		bbox_top = E.y;
+		E.package.contacts(C)
+		{
+			bbox_left = min(bbox_left, C.x);
+			bbox_right = max(bbox_right, C.x);
+			bbox_bottom = min(bbox_bottom, C.y);
+			bbox_top = max(bbox_top, C.y);
+		}
+if(debug)
+{
+		sprintf(tmp,"%s: (%f %f) (%f %f)\n",E.name,bbox_left,bbox_bottom,bbox_right,bbox_top);
+		debug_text += tmp;
+}
+
+		////////////////////////////////////////////////////////////////////////////////////////
+		// Process the signals to find those connected to the part and having a wire segment
+		// with at least one endpoint in the part bounding box.
+		////////////////////////////////////////////////////////////////////////////////////////
+		B.signals(S)
+		{
+			int connected_to_part = 0;
+			S.contactrefs(C)
+			{
+				if(C.element.name == part_id)
+				{
+					connected_to_part = 1;
+					break;
+				}
+			}
+			if(!connected_to_part)
+				continue;
+			S.wires(W)
+			{
+				if(in_bbox(W.x1,W.y1,bbox_left,bbox_bottom,bbox_right,bbox_top) ||
+				   in_bbox(W.x2,W.y2,bbox_left,bbox_bottom,bbox_right,bbox_top))
+					record_wire(W,E);
+			}
+			S.vias(V)
+			{
+				if(in_bbox(V.x,V.y,bbox_left,bbox_bottom,bbox_right,bbox_top))
+					record_via(V,E);
+			}
+		}
+
+		break;
+	}
+
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Store the recorded fanout if no errors were found.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+finish_up();
+

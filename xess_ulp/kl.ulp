@@ -1,0 +1,917 @@
+#usage "<b>Straighten-out connections to pins</b>\n"
+       "<p>"
+       "This ULP swaps pins in the schematic to remove net crossings."
+       "<p>"
+       "Usage:<p>"
+       "<blockquote>1. Open a schematic.<p>"
+       "2. .<p>"
+       "3. .<p></blockquote>"
+       "Note:<p>"
+       "<blockquote>-This ULP outputs the '.scr' temporary file in the same directory as this ULP. It does NOT automatically delete it.<p>"
+       "-This ULP is tested on EAGLE standard ver 4.11 for Windows.<p></blockquote>"
+       "<p>"
+       "<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+#include "useful-routines.ulp"
+
+string report_file = "rearrange-pins.rpt";
+output(report_file); // clear the file
+string script_file = "rearrange-pins.scr";
+output(script_file); // clear the file
+
+int start_time = time();
+
+int num_swap_lists;		// number of lists of pins at the same swaplevel
+int swap_list_start[];		// index into pin_index[] for the start of each swap list
+
+int num_pins;	// number of pin pointers in pin_index[] and net pointers in net_ptr[]
+int pin_index[];	// indices to pin info
+int net_ptr[];	// indices to net information
+
+// pin info: swaplevel, name, (x,y) location, and net containing the pin
+int pin_swaplevel[];
+string pin_name[];
+string pin_gate_name[];
+int pin_x[];
+int pin_y[];
+
+// net info
+int num_nets;
+int net_end;		// pointer to end of net[]
+// stores lists of pins on each net. (net# 0, #pins 1, (p1,p2,...,pN), net# 1, #pins 2,...)
+int net[];
+string net_name[];		
+
+// segment info
+int num_segments;
+int segment_end;	// pointer to end of segment[]
+int segment[];		// stores lists of 2-pin segments for each net. ((p1,p2),(p3,p4),(p5,p6),(p7,p8),...) 
+int saved_segment[];
+
+
+int seed = time() % 32768;
+int rand_int(void)
+{
+	seed = (1103515245*seed + 12345) % 32768;
+	return seed;
+}
+
+real rand(void)
+{
+	return rand_int() / 32767.0;
+}
+
+
+// print the nets
+void print_nets(void)
+{
+	for(int n=0; n<net_end; n+=(net[n+1]+2))
+	{
+		printf("Net %s: ",net_name[net[n]]);
+		string delimiter = "";
+		for(int i=0; i<net[n+1]; i++)
+		{
+			printf("%s%s",delimiter,pin_name[pin_index[net[n+2+i]]]);
+			delimiter = " -> ";
+		}
+		printf("\n");
+	}
+}
+
+
+// print the segments
+void print_segments(void)
+{
+	printf("Segments:\n");
+	for(int s=0; s<segment_end; s+=2)
+	{
+		printf("\t%s(%d,%d) -- %s(%d,%d)\n",pin_name[pin_index[segment[s]]],pin_x[pin_index[segment[s]]],pin_y[pin_index[segment[s]]],
+						pin_name[pin_index[segment[s+1]]],pin_x[pin_index[segment[s+1]]],pin_y[pin_index[segment[s+1]]]);
+	}
+}
+
+
+// print the pins
+void print_pins(void)
+{
+	printf("Pins:\n");
+	for(int p=0; p<num_pins; p++)
+	{
+		printf("\t%s swaplevel=%d x=%d y=%d\n",pin_name[pin_index[p]],pin_swaplevel[pin_index[p]],pin_x[pin_index[p]],pin_y[pin_index[p]]);
+	}
+}
+
+// determine if two segments intersect
+int segments_intersect(int s1, int s2) // s1, s2: pointers to segments
+{
+	if(s1==s2)
+		return 0;	// don't count intersections of a segment with itself
+
+	// to calculate the intersection of two segments, use equations:
+	// (x y) = a(x0 y0) + (1-a)(x1 y1)
+	// (x y) = b(x2 y2) + (1-b)(x3 y3)
+	// solve for a and b.  If 0<a<1 and 0<b<1 then the two segments intersect.
+	real x0,y0, x1,y1, x2,y2, x3,y3;
+	real a, b, den, num;
+	real tolerance = 0.001;
+	x0 = pin_x[pin_index[segment[s1]]];
+	y0 = pin_y[pin_index[segment[s1]]];
+	x1 = pin_x[pin_index[segment[s1+1]]];
+	y1 = pin_y[pin_index[segment[s1+1]]];
+	x2 = pin_x[pin_index[segment[s2]]];
+	y2 = pin_y[pin_index[segment[s2]]];
+	x3 = pin_x[pin_index[segment[s2+1]]];
+	y3 = pin_y[pin_index[segment[s2+1]]];
+	den = (y0-y1)*(x2-x3)-(x0-x1)*(y2-y3);
+	if(den==0) return 0; // segments are parallel if this denominator is zero
+	num = (x1-x3)*(y2-y3)-(y1-y3)*(x2-x3);
+	a = num / den;
+	den = (y2-y3)*(x0-x1)-(x2-x3)*(y0-y1);
+	num = (x3-x1)*(y0-y1)-(y3-y1)*(x0-x1);
+	b = num / den;
+	if((a>=tolerance) && (a<=1-tolerance) && (b>=tolerance) && (b<=1-tolerance))
+		return 1; // segments intersect
+	else
+		return 0; // intersection point is not between the segment endpoints
+}
+
+
+// determine the number of segments that intersect the given segment
+int calc_intersections_with_segment(int s) // s: pointer to segment
+{
+	int num_intersections = 0;
+	for(int i=0; i<segment_end; i+=2)
+		num_intersections += segments_intersect(s,i);
+	return num_intersections;
+}
+
+// determine the total number of intersections between segments
+int calc_intersections_with_all_segments(void)
+{
+	int num_intersections = 0;
+	for(int s=0; s<segment_end; s+=2)
+		num_intersections += calc_intersections_with_segment(s);
+	return num_intersections/2;
+}
+
+
+// calculate the pointer to the segments for a net
+int get_segments(int n) // pointer to net
+{
+	int net_num = net[n];
+	return 2 * (n - 3*net_num + 1);
+}
+
+
+// determine the number of intersections between segments of two nets
+int calc_intersections_between_nets(int n1, int n2) // n1,n2: pointers to nets
+{
+	int segs1 = get_segments(n1);
+	int num_segs1 = net[n1+1] - 1; // num segments = num pins on net - 1
+	int segs2 = get_segments(n2);
+	int num_segs2 = net[n2+1] - 1;
+	int num_intersections = 0;
+	for(int i=0; i<num_segs1; i++)
+		for(int j=0; j<num_segs2; j++)
+			num_intersections += segments_intersect(segs1+2*i,segs2+2*j);
+	return num_intersections;
+}
+
+
+// determine the number of intersections between a net and all other nets
+int calc_intersections_with_net(int n) // n: pointer to net
+{
+	int num_intersections = 0;
+	for(int i=0; i<net_end; i+=(net[i+1]+2))
+		num_intersections += calc_intersections_between_nets(i,n);
+	return num_intersections;	
+}
+
+
+// determine the number of intersections between all nets
+int calc_intersections_with_all_nets(void)
+{
+	int num_intersections = 0;
+	for(int i=0; i<net_end; i+=(net[i+1]+2))
+		num_intersections += calc_intersections_with_net(i);
+	return num_intersections/2;
+}
+
+
+// compute distance between two pins
+real distance(int p1, int p2) // p1,p2: pointers to pins
+{
+	real dx = pin_x[p1] - pin_x[p2];
+	real dy = pin_y[p1] - pin_y[p2];
+	return dx*dx + dy*dy;
+}
+
+
+// determine the segments for a particular net
+int create_segments_for_net(int n)	// n: pointer to net
+{
+	int joined[];
+	int num_net_pins = net[n+1];
+	int s = get_segments(n);
+
+	// join N pins until there are N-1 segments
+	for(int i=0; i<num_net_pins; i++)
+		joined[i] = 0;
+	for(int seg_num=1; seg_num<num_net_pins; seg_num++)
+	{
+		// find the two closest pins
+		int min_i, min_j;
+		real min_d = -1; // initialize minimum distance to an impossible value
+		for(int i=0; i<num_net_pins; i++)
+		{
+			for(int j=i+1; j<num_net_pins; j++)
+			{
+				// skip pins already connected on contiguous segments
+				if(joined[i]!=0 && joined[i]==joined[j])
+					continue;
+				real dij = distance(pin_index[net[n+2+i]],pin_index[net[n+2+j]]);
+				if((min_d < 0) || (dij < min_d))
+				{
+					min_i = i;
+					min_j = j;
+					min_d = dij;
+				}
+			}
+		}
+
+		// join the pins
+		if(joined[min_i]==0)
+		{
+			if(joined[min_j]==0)
+			{ // two unconnected pins, so assign a unique join number
+				joined[min_i] = seg_num;
+				joined[min_j] = seg_num;
+			}
+			else // join min_i pin to min_j
+				joined[min_i] = joined[min_j];
+		}
+		else
+		{
+			if(joined[min_j]==0) // join min_j pin to min_i
+				joined[min_j] = joined[min_i];
+			else
+			{ // both pins have different join numbers, so renumber pins on one of the joins
+				int replace = joined[min_j];
+				for(int i=0; i<num_net_pins; i++)
+					if(joined[i]==replace)
+						joined[i] = joined[min_i];
+			}
+		}
+
+		// create a segment from the two pins
+		segment[s+2*(seg_num-1)] = net[n+2+min_i];
+		segment[s+2*(seg_num-1)+1] = net[n+2+min_j];
+	}
+
+	return(num_net_pins-1); // return number of segments created
+}
+
+
+// create segments for all the nets
+void create_segments_for_all_nets(void)
+{
+	for(int n=0; n<net_end; n+=(net[n+1]+2))
+		create_segments_for_net(n);
+	segment_end = 2 * (net_end - 3*num_nets + 1);
+}
+
+
+// calculate the change in cost when two pins are swapped
+int calc_pinswap_cost(int p1, int p2) // p1,p2: pointers to pin pointers
+{
+	int n1 = net_ptr[p1];
+	int n2 = net_ptr[p2];
+
+	if(n1==n2)
+		return 0;
+
+	int cost = 0;
+	cost -= calc_intersections_with_net(n1);
+	cost -= calc_intersections_with_net(n2);
+	cost += calc_intersections_between_nets(n1,n2);
+
+	for(int i=0; i<segment_end; i++)
+		saved_segment[i] = segment[i];
+
+	int tmp = pin_index[p1];
+	pin_index[p1] = pin_index[p2];
+	pin_index[p2] = tmp;
+
+	create_segments_for_net(n1);
+	create_segments_for_net(n2);
+
+	cost += calc_intersections_with_net(n1);
+	cost += calc_intersections_with_net(n2);
+	cost -= calc_intersections_between_nets(n1,n2);
+
+	for(i=0; i<segment_end; i++)
+		segment[i] = saved_segment[i];
+
+	tmp = pin_index[p1];
+	pin_index[p1] = pin_index[p2];
+	pin_index[p2] = tmp;
+
+	return cost;
+}
+
+
+real calc_pin_angle(int i, real centroid_x, real centroid_y)
+{
+	real dx, dy, angle;
+	dx = pin_x[pin_index[i]] - centroid_x;
+	dy = pin_y[pin_index[i]] - centroid_y;
+	if(dx==0.0)
+	{
+		if(dy<0)
+			angle = PI/2;
+		else
+			angle = 3*PI/2;
+	}
+	else if(dx > 0.0)
+	{
+		if(dy >= 0.0)
+			angle = atan(dy / dx);
+		else // dy < 0
+			angle = atan(dy / dx) + 2*PI;
+	}
+	else // dx < 0
+	{
+		if(dy >= 0.0)
+			angle = atan(dy / dx) + PI;
+		else // dy < 0
+			angle = atan(dy / dx) + PI;
+	}
+	return angle;
+}
+
+
+real calc_pin_distance(int i, real centroid_x, real centroid_y)
+{
+	real dx, dy;
+	dx = pin_x[pin_index[i]] - centroid_x;
+	dy = pin_y[pin_index[i]] - centroid_y;
+	return dx*dx + dy*dy;
+}
+
+
+void randomize(void)
+{
+	int total_cost = calc_intersections_with_all_nets();
+	int elapsed_time = time() - start_time;
+	output(report_file,"at")
+	{
+		printf("#intersections = %d @ %02d:%02d:%02d\n",total_cost,t2hour(elapsed_time),t2minute(elapsed_time),t2second(elapsed_time));
+	}
+	for(int k=0; k < num_swap_lists; k++)
+	{
+		// swap all pins in a swap list
+		for(int i=swap_list_start[k]; i<swap_list_start[k+1]; i++)
+		{
+			if(pin_swaplevel[pin_index[i]] == 0) continue;	// skip unmoveable pins
+			for(int j=i+1; j<swap_list_start[k+1]; j++)
+			{
+				// skip this pin if it is not the same swaplevel as i
+				if(pin_swaplevel[pin_index[j]] != pin_swaplevel[pin_index[i]]) continue;
+				if(rand() < 0.5) continue;
+				int tmp = pin_index[i];
+				pin_index[i] = pin_index[j];
+				pin_index[j] = tmp;
+			}
+		}
+	}
+	total_cost = calc_intersections_with_all_nets();
+	elapsed_time = time() - start_time;
+	output(report_file,"at")
+	{
+		printf("#intersections = %d @ %02d:%02d:%02d\n",total_cost,t2hour(elapsed_time),t2minute(elapsed_time),t2second(elapsed_time));
+	}
+}
+
+
+void dumb(void)
+{
+	int cost, min_cost, total_cost;
+	int new_min_cost_set;
+	int min_swap_cost_set;
+	int moved[];
+
+//	total_cost = calc_intersections_with_all_nets();
+//	int elapsed_time = time() - start_time;
+//	output(report_file,"at")
+//	{
+//		printf("#intersections = %d @ %02d:%02d:%02d\n",total_cost,t2hour(elapsed_time),t2minute(elapsed_time),t2second(elapsed_time));
+//	}
+
+	int saved_pin_index[];		// save list of pin indices (for returning to previous config.)
+	for(int i=0; i<num_pins; i++)
+		saved_pin_index[i] = pin_index[i];
+
+	// make the pins available for moving
+	for(i=swap_list_start[num_swap_lists]-1; i>=0; i--)
+		moved[i] = 0;					
+
+	// go through all the lists of swappable pins
+	for(int k=0; k < num_swap_lists; k++)
+	{
+		// find centroid of pins
+		real centroid_x = 0.0;
+		real centroid_y = 0.0;
+		for(i=swap_list_start[k]; i<swap_list_start[k+1]; i++)
+		{
+			centroid_x += pin_x[pin_index[i]];
+			centroid_y += pin_y[pin_index[i]];
+		}
+		centroid_x /= (swap_list_start[k+1] - swap_list_start[k]);
+		centroid_y /= (swap_list_start[k+1] - swap_list_start[k]);
+
+		// find angles for all pins w.r.t. centroid
+		real pin_angle[];
+		for(i=swap_list_start[k]; i<swap_list_start[k+1]; i++)
+		{
+			pin_angle[pin_index[i]] = calc_pin_angle(i,centroid_x,centroid_y);
+//			output(report_file,"at")
+//			{
+//				printf("%s:\tangle = %0.2f\n",pin_name[pin_index[i]],pin_angle[pin_index[i]]);
+//			}
+		}
+
+		// find the closest pins on nets that are not on the device
+		int net_chip_pin_index[];
+		int net_pin_index[];
+		int net_swaplevel[];
+		real net_distance[];
+		real net_angle[];
+		int n = 0;
+		for(i=swap_list_start[k]; i<swap_list_start[k+1]; i++)
+		{
+			net_chip_pin_index[n] = i;
+
+			if(pin_swaplevel[pin_index[i]] == 0)
+				continue;	// skip nets attached to non-moveable pins
+
+			int valid_min = 0;
+			real min_dist;
+			int min_pin_ptr;
+			for(int j=0; j<net[net_ptr[i]+1]; j++)
+			{
+				int net_pin_ptr = net[net_ptr[i]+2+j];
+
+				// skip net pins that are on the device
+				if((net_pin_ptr >= swap_list_start[k]) && (net_pin_ptr < swap_list_start[k+1]))
+					continue;
+
+				real d = calc_pin_distance(net_pin_ptr,centroid_x,centroid_y);
+				if(!valid_min || (d < min_dist))
+				{
+					min_dist = d;
+					min_pin_ptr = net_pin_ptr;
+					valid_min = 1;
+				}
+			}
+			net_swaplevel[n] = pin_swaplevel[pin_index[i]];
+			net_angle[n] = calc_pin_angle(min_pin_ptr,centroid_x,centroid_y);
+			net_distance[n] = sqrt(min_dist) / 10000;
+			net_pin_index[n] = min_pin_ptr;
+			n++;
+		}
+		int n_indx[];
+		sort(n,n_indx,net_swaplevel,net_angle,net_distance,net_pin_index,net_chip_pin_index);
+		for(i=0; i<n; i++)
+		{
+			output(report_file,"at")
+			{
+				printf("%s %1d %.2f %.2f\n",pin_name[pin_index[net_pin_index[n_indx[i]]]],net_swaplevel[n_indx[i]],net_angle[n_indx[i]],net_distance[n_indx[i]]);
+			}
+		}
+
+		int chip_pin_index[];
+		int chip_swaplevel[];
+		real chip_angle[];
+		int p = 0;
+		for(i=swap_list_start[k]; i<swap_list_start[k+1]; i++)
+		{
+			if(pin_swaplevel[pin_index[i]] == 0)
+				continue;
+			chip_swaplevel[p] = pin_swaplevel[pin_index[i]];
+			chip_pin_index[p] = i;
+			chip_angle[p] = calc_pin_angle(i,centroid_x,centroid_y);
+			p++;
+		}
+		int p_indx[];
+		sort(p,p_indx,chip_swaplevel,chip_angle,chip_pin_index);
+		for(i=0; i<p; i++)
+		{
+			output(report_file,"at")
+			{
+				printf("%s %1d %.2f\n",pin_name[pin_index[chip_pin_index[p_indx[i]]]],chip_swaplevel[p_indx[i]],chip_angle[p_indx[i]]);
+			}
+		}
+		int min_shift;
+		real min_angle_diff;
+		min_angle_diff = p * 2 * PI;
+		for(int shift=0; shift<p; shift++)
+		{
+			real total_angle_diff = 0;
+			for(i=0; i<n; i++)
+			{
+				real da = abs(pin_angle[p_indx[(i+shift)%p]] - net_angle[n_indx[i]]);
+				if(da > PI)
+					da = 2*PI - da;
+				total_angle_diff += da;
+			}
+			if(total_angle_diff < min_angle_diff)
+			{
+				min_angle_diff = total_angle_diff;
+				min_shift = shift;
+			}
+		}
+
+		for(i=0; i<n; i++)
+		{
+			output(report_file,"at")
+			{
+				printf("%s -- %s\n",pin_name[pin_index[net_pin_index[n_indx[i]]]],pin_name[pin_index[chip_pin_index[p_indx[(i+min_shift)%p]]]]);
+			}
+		}
+
+		int new_pin_index[];
+		for(i=0; i<num_pins; i++)
+			new_pin_index[i] = pin_index[i];
+		for(i=0; i<n; i++)
+			new_pin_index[net_chip_pin_index[n_indx[i]]] = pin_index[chip_pin_index[p_indx[(i+min_shift)%p]]];
+//			new_pin_index[chip_pin_index[p_indx[(i+min_shift)%p]]] = pin_index[net_chip_pin_index[n_indx[i]]];
+		for(i=0; i<num_pins; i++)
+			pin_index[i] = new_pin_index[i];
+
+/*
+			if(valid_min)
+			{
+				real angle = calc_pin_angle(min_pin_ptr,centroid_x,centroid_y);
+				real closest_angle = 2*PI;
+				int closest_pin;
+				for(j=swap_list_start[k]; j<swap_list_start[k+1]; j++)
+				{
+					real da = abs(angle - pin_angle[pin_index[j]]);
+					if(da > PI)
+						da = 2*PI - da;
+					if(da < closest_angle)
+					{
+						closest_angle = da;
+						closest_pin = pin_index[j];
+					}
+				}
+				output(report_file,"at")
+				{
+					printf("%s - %s attached to %s\n",net_name[net[net_ptr[i]]],pin_name[pin_index[min_pin_ptr]],pin_name[closest_pin]);
+				}
+			}
+*/
+/*
+		// swap all pins in a swap list
+		for(i=swap_list_start[k]; i<swap_list_start[k+1]; i++)
+		{
+			if(pin_swaplevel[pin_index[i]] == 0) continue;	// skip unmoveable pins
+			if(swapped[i] > 0) continue; // skip this pin if it has already been swapped
+
+			for(int j=i+1; j<swap_list_start[k+1]; j++)
+			{
+				// skip this pin if it has already been swapped or is not the same swaplevel as i
+				if(swapped[j] > 0) continue;
+				if(pin_swaplevel[pin_index[j]] != pin_swaplevel[pin_index[i]]) continue;
+
+				// determine the change in cost if these two connections are swapped
+				int swap_cost = calc_pinswap_cost(i,j);
+
+				// save the indices to these two connections if this is the best
+				// swap so far or if the minimum swap cost is not set yet
+				if((swap_cost < min_swap_cost) || !min_swap_cost_set)
+				{	
+					min_j = j; // save the connection indices...
+					min_i = i;
+					min_k = k; // and the list they are on
+					min_swap_cost = swap_cost; // save the minimum swap cost found so far
+					min_swap_cost_set = 1; // the minimum swap cost has been set
+				}
+			}
+		}
+*/
+	}
+/*
+			// found the best of all the currently possible pin swaps, so update the pin list
+			if(min_swap_cost_set)
+			{
+				int tmp = pin_index[min_i];
+				pin_index[min_i] = pin_index[min_j];
+				pin_index[min_j] = tmp;
+				swapped[min_i] = 1;
+				swapped[min_j] = 1;
+				cost += min_swap_cost; // update the total cost based on the change in cost caused by the swap
+			}
+
+			// save the lists of connections if this is the best arrangement found so far
+			if(cost < min_cost)
+			{
+				new_min_cost_set = 1;
+				for(int i=0; i<num_pins; i++)
+					saved_pin_index[i] = pin_index[i];
+				min_cost = cost; // update the minimum cost
+			}
+*/
+
+//	total_cost = calc_intersections_with_all_nets();
+//	elapsed_time = time() - start_time;
+//	output(report_file,"at")
+//	{
+//		printf("#intersections = %d @ %02d:%02d:%02d\n",total_cost,t2hour(elapsed_time),t2minute(elapsed_time),t2second(elapsed_time));
+//	}
+}
+
+
+void kl(void)
+{
+	int cost, min_cost, total_cost;
+	int new_min_cost_set;
+	int min_swap_cost_set;
+	int swapped[];
+
+	total_cost = calc_intersections_with_all_nets();
+	int elapsed_time = time() - start_time;
+	output(report_file,"at")
+	{
+		printf("#intersections = %d @ %02d:%02d:%02d\n",total_cost,t2hour(elapsed_time),t2minute(elapsed_time),t2second(elapsed_time));
+	}
+
+	int saved_pin_index[];		// save list of pin indices (for returning to previous config.)
+
+	// iterate until the cost can no longer be decreased
+	do
+	{
+		// reset cost and change in cost to zero at the start of each iteration
+		cost = 0;
+		min_cost = 0;
+
+		// save the current arrangement of pins (this is the best arrangement so far)
+		for(int i=0; i<num_pins; i++)
+			saved_pin_index[i] = pin_index[i];
+
+		// make the pins available for swapping
+		for(i=swap_list_start[num_swap_lists]-1; i>=0; i--)
+			swapped[i] = 0;					
+
+		// process the swap lists as long as pins are available to swap
+		do
+		{
+			// compute the reduction in cost for each possible swap of two pins
+			// within each list of connections.
+
+			new_min_cost_set = 0;
+
+			min_swap_cost_set = 0; // the minimum cost has not been set, yet
+			int min_swap_cost; // this stores the minimum cost of all the potential swaps
+			int min_i, min_j, min_k; // these store the indices of the minimum cost swap pins and the list they are in
+
+			// go through all the lists of swappable pins
+			for(int k=0; k < num_swap_lists; k++)
+			{
+				// swap all pins in a swap list
+				for(i=swap_list_start[k]; i<swap_list_start[k+1]; i++)
+				{
+					if(pin_swaplevel[pin_index[i]] == 0) continue;	// skip unmoveable pins
+					if(swapped[i] > 0) continue; // skip this pin if it has already been swapped
+
+					for(int j=i+1; j<swap_list_start[k+1]; j++)
+					{
+						// skip this pin if it has already been swapped or is not the same swaplevel as i
+						if(swapped[j] > 0) continue;
+						if(pin_swaplevel[pin_index[j]] != pin_swaplevel[pin_index[i]]) continue;
+
+						// determine the change in cost if these two connections are swapped
+						int swap_cost = calc_pinswap_cost(i,j);
+
+						// save the indices to these two connections if this is the best
+						// swap so far or if the minimum swap cost is not set yet
+						if((swap_cost < min_swap_cost) || !min_swap_cost_set)
+						{	
+							min_j = j; // save the connection indices...
+							min_i = i;
+							min_k = k; // and the list they are on
+							min_swap_cost = swap_cost; // save the minimum swap cost found so far
+							min_swap_cost_set = 1; // the minimum swap cost has been set
+						}
+					}
+				}
+			}
+
+			// found the best of all the currently possible pin swaps, so update the pin list
+			if(min_swap_cost_set)
+			{
+				int tmp = pin_index[min_i];
+				pin_index[min_i] = pin_index[min_j];
+				pin_index[min_j] = tmp;
+				swapped[min_i] = 1;
+				swapped[min_j] = 1;
+				cost += min_swap_cost; // update the total cost based on the change in cost caused by the swap
+			}
+
+			// save the lists of connections if this is the best arrangement found so far
+			if(cost < min_cost)
+			{
+				new_min_cost_set = 1;
+				for(int i=0; i<num_pins; i++)
+					saved_pin_index[i] = pin_index[i];
+				min_cost = cost; // update the minimum cost
+			}
+
+		}while(new_min_cost_set); // pins were swapped as long as this flag is set
+
+		// Restore the arrangement of pins that had that minimum cost. (May have actually been the arrangement at the start of this iteration.)
+		for(i=0; i<num_pins; i++)
+			pin_index[i] = saved_pin_index[i];
+
+		total_cost += min_cost;
+		int elapsed_time = time() - start_time;
+		output(report_file,"at")
+		{
+			printf("#intersections = %d @ %02d:%02d:%02d\n",total_cost,t2hour(elapsed_time),t2minute(elapsed_time),t2second(elapsed_time));
+		}
+
+	} while(min_cost < 0); // keep iterating through the connections as long as the cost is decreasing
+}
+
+
+
+int original_pin_index[];
+
+if(!schematic)
+{
+	dlgMessageBox("Start this ULP from a schematic!", "OK");
+	exit (0);
+}
+
+string part_id;
+int result = dlgDialog("Enter Chip to Straighten") {
+               dlgStringEdit(part_id);	// get the identifier for the part whose pins need straightening
+               dlgPushButton("+OK")    dlgAccept();
+               dlgPushButton("Cancel") dlgReject();
+               };
+if(result == 0)
+	exit (0);
+part_id = strupr(part_id);
+
+schematic(S)
+{
+	int bbox_xl, bbox_xr, bbox_yb, bbox_yt;
+	int init_part_bbox, find_bbox;
+
+	// go through all the parts on the schematic and info on each pin
+	num_swap_lists = 0;
+	num_pins = 0;
+	S.parts(P)
+	{
+		if(P.name==part_id)
+		{
+			swap_list_start[num_swap_lists] = num_pins;
+			init_part_bbox = 1;
+			find_bbox = 1;
+		}
+		else
+			find_bbox = 0;
+
+		P.instances(I)
+		{
+			I.gate.symbol.pins(pin)
+			{
+				if(!pin.contact) continue;  // skip pins for things like GND symbols
+
+				pin_name[num_pins] = P.name + "-" + pin.contact.name;
+				pin_gate_name[num_pins] = P.name + I.gate.name;
+				pin_x[num_pins] = pin.contact.x;
+				pin_y[num_pins] = pin.contact.y;
+				pin_swaplevel[num_pins] = I.gate.swaplevel;
+				pin_index[num_pins] = num_pins;
+				if(init_part_bbox && find_bbox)
+				{
+					bbox_xl = pin.contact.x;
+					bbox_xr = bbox_xl;
+					bbox_yb = pin.contact.y;
+					bbox_yt = bbox_yb;
+					init_part_bbox = 0;
+				}
+				else if(find_bbox)
+				{
+					if(pin.contact.x < bbox_xl)
+						bbox_xl = pin.contact.x;
+					if(bbox_xr < pin.contact.x)
+						bbox_xr = pin.contact.x;
+					if(pin.contact.y < bbox_yb)
+						bbox_yb = pin.contact.y;
+					if(bbox_yt < pin.contact.y)
+						bbox_yt = pin.contact.y;
+				}
+				num_pins++;
+			}
+		}
+		if(P.name==part_id)
+		{
+			num_swap_lists++;
+			swap_list_start[num_swap_lists] = num_pins;
+		}
+	}
+
+	num_nets = 0;
+	int net_start = 0;
+	net_end = 2;
+	net_name[num_nets] = "NC";
+	net[net_start] = num_nets;
+	net[net_start+1] = 0;
+	num_nets++;
+	S.nets(N)
+	{
+		// don't consider power or ground nets when straightening pins
+		if(strstr(N.name,"+")==0)
+			continue;
+		if(strstr(N.name,"GND")>=0)
+			continue;
+
+		net_name[num_nets] = N.name;
+		net_start = net_end;
+		net_end = net_start+2;
+		net[net_start] = num_nets;
+		net[net_start+1] = 0;
+		N.pinrefs(PR)
+		{
+			string pin_nm = PR.part.name + "-" + PR.pin.contact.name;
+			for(int i=0; i<num_pins; i++)
+			{
+				if(pin_name[i]==pin_nm)
+				{
+					net_ptr[i] = net_start;
+					net[net_end] = i;
+					net[net_start+1]++;
+					net_end++;
+				}
+			}
+		}
+		num_nets++;
+	}
+
+	// once all nets are input, create the segments for each net
+	create_segments_for_all_nets();
+
+	// Create segments that form a bounding box around the device pins.
+	// This helps keep the optimizer from swapping pins to the opposite side of the chip
+	// because this would cause crossings of the bounding box segments
+	net_start = net_end;
+	net[net_end] = num_nets; net_end++;
+	net[net_end] = 5; net_end++;
+	num_nets++;
+	pin_index[num_pins] = num_pins; pin_x[num_pins] = bbox_xl; pin_y[num_pins] = bbox_yb; net_ptr[num_pins] = net_start; net[net_end] = num_pins; net_end++; num_pins++;
+	pin_index[num_pins] = num_pins; pin_x[num_pins] = bbox_xr; pin_y[num_pins] = bbox_yb; net_ptr[num_pins] = net_start; net[net_end] = num_pins; net_end++; num_pins++;
+	pin_index[num_pins] = num_pins; pin_x[num_pins] = bbox_xr; pin_y[num_pins] = bbox_yt; net_ptr[num_pins] = net_start; net[net_end] = num_pins; net_end++; num_pins++;
+	pin_index[num_pins] = num_pins; pin_x[num_pins] = bbox_xl; pin_y[num_pins] = bbox_yt; net_ptr[num_pins] = net_start; net[net_end] = num_pins; net_end++; num_pins++;
+	pin_index[num_pins] = num_pins; pin_x[num_pins] = bbox_xl; pin_y[num_pins] = bbox_yb; net_ptr[num_pins] = net_start; net[net_end] = num_pins; net_end++; num_pins++;
+	segment[segment_end] = num_pins-5; segment_end++;
+	segment[segment_end] = num_pins-4; segment_end++;
+	segment[segment_end] = num_pins-4; segment_end++;
+	segment[segment_end] = num_pins-3; segment_end++;
+	segment[segment_end] = num_pins-3; segment_end++;
+	segment[segment_end] = num_pins-2; segment_end++;
+	segment[segment_end] = num_pins-2; segment_end++;
+	segment[segment_end] = num_pins-1; segment_end++;
+}
+
+for(int i=0; i<num_pins; i++)
+	original_pin_index[i] = pin_index[i];
+
+randomize();
+// dumb();
+// kl();
+
+output(script_file,"wt")
+{
+	for(int k=0; k<num_swap_lists; k++)
+	{
+		for(int i=swap_list_start[k]; i<swap_list_start[k+1]; i++)
+		{
+			if(original_pin_index[i]==pin_index[i])
+				continue;
+			printf("GATESWAP %s %s;\n",pin_gate_name[original_pin_index[i]],pin_gate_name[pin_index[i]]);
+			for(int j=i+1; j<swap_list_start[k+1]; j++)
+			{
+				if(original_pin_index[j]==pin_index[i])
+				{
+					original_pin_index[j] = original_pin_index[i];
+					original_pin_index[i] = pin_index[i];
+				}
+			}
+		}
+	}
+}
+exit("SCRIPT '" + script_file + "';\n");

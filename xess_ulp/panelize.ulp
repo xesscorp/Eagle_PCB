@@ -1,0 +1,124 @@
+#usage "<b>Generate name layers to panelize board</b>\n"
+       "<p>"
+       "Generates a command sequence which copies the name texts (support spin-flag) "
+       "of all elements of your layout into newly generated layers (125 and 126). "
+       "After running the ULP you can GROUP, CUT and PASTE your layout "
+       "to get an array of several boards. Make sure all layers are displayed before."
+       "<p>"
+       "The duplicated name texts in the new layers will not be changed. "
+       "Please notice that you have to deactivate layers 25 and 26 if you use "
+       "the CAM processor e.g. for generating gerber data. Instead, you have to activate "
+       "the new layers 125 and 126. Thus you get an identical silk screen for all "
+       "your layouts in this array."
+       "<p>"
+       "<b>Texts must be SMASHed before we can duplicate them!</b> "
+       "<p>"
+       "<author>Author: support@cadsoft.de</author>"
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+#require 4.1106;
+
+// 6.12.2004 Text with Spin-Flag support@cadsoft.de
+
+int  offset = 100;
+string tcolor = "yellow";
+string bcolor = "magenta";
+int    used_name_layers[];
+string used_name_[];
+
+string cmd_header;
+string cmd = "\nSET UNDO_LOG OFF;\nGRID MIL;\n"; // advisable for speed reasons
+string h;
+
+void test(void) {
+  string txt = "Used Layers for >NAME\n";
+  for (int n = 0; n < 256; n++) {
+    if(used_name_layers[n]) {
+      sprintf(h, "Layer %3d count %d\t%s\n", n, used_name_layers[n], used_name_[n]);
+      txt += h;
+    }
+  }
+  if (dlgMessageBox(txt, "OK", "Cancel") != 0) exit(-1);
+  return;
+}
+
+void header(void) {
+  for (int n = 0; n < 256; n++) {
+    if(used_name_layers[n]) {
+      sprintf(h, "layer %d _%s;\n", n + offset, used_name_[n]);
+      cmd_header += h;
+      if (n & 1) sprintf(h, "set color_layer %d %s;\n",  n + offset, tcolor);
+      else       sprintf(h, "set color_layer %d %s;\n",  n + offset, bcolor);
+      cmd_header += h;
+    }
+  }
+}
+
+void Text(string Ename, int Tlayer, int Tx, int Ty, int Tsize, real Tangle, int Tratio, int Tmirror, int Tspin) {
+  sprintf(h, "Change Layer %d;\n", Tlayer + offset);
+  cmd += h;
+  sprintf(h, "Change Size %5.3f;\n", u2mil(Tsize));
+  cmd += h;
+  sprintf(h, "Change Ratio %d;\n", Tratio);
+  cmd += h;
+  string mirr, spin;
+  if (Tmirror) mirr = "M";
+  else mirr = "";
+  if (Tspin) spin = "S";
+  else spin = "";
+  sprintf(h, "Text '%s' %s%sR%.1f (%5.3f %5.3f);\n", Ename, spin, mirr, Tangle, u2mil(Tx), u2mil(Ty));
+  cmd += h;
+  return;
+}
+
+
+
+if (board) {
+  board(B) {
+    B.layers(L) {
+      used_name_[L.number] = L.name;
+    }
+    header();
+    B.elements(E) {  // smashed texts
+      E.texts(T) {
+        if (T.value == E.name) {
+          used_name_layers[T.layer]++;
+          Text(E.name, T.layer, T.x, T.y, T.size, T.angle, T.ratio, T.mirror, T.spin);
+        }
+      }
+      E.package.texts(T) {  // unsmashed texts
+        if (T.value == E.name) {
+          used_name_layers[T.layer]++;
+          Text(E.name, T.layer, T.x, T.y, T.size, T.angle, T.ratio, T.mirror, T.spin);
+        }
+      }
+    }
+  }
+  // test();
+
+  cmd += "SET UNDO_LOG ON;\nGRID LAST;\n";
+  header();
+  cmd_header += cmd;
+  cmd = cmd_header;
+
+  //  EditBox
+  int Result = dlgDialog("Descriptions") {
+    dlgHBoxLayout {
+      dlgVBoxLayout { dlgSpacing(500); }
+      dlgTextEdit(cmd);
+    }
+    dlgHBoxLayout {
+      dlgPushButton("+Execute") dlgAccept();
+      dlgSpacing(100);
+      dlgPushButton("-Cancel") dlgReject();
+      }
+    };
+  if (Result == 0) exit(0);
+  exit(cmd);
+}
+
+else {
+   dlgMessageBox("\n Start this ULP in a Board \n");
+   exit (0);
+}

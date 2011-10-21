@@ -1,0 +1,253 @@
+#usage "Changes all Elements (wires, circles, arcs, rectangles and texts) "
+       "from layer a to layer b<p>\n"
+       "Use: run cmd_change_swap_layer.ulp<p>\n"
+       "<author>Author: support@cadsoft.de</author>"
+
+string Help = "\nYou can not schange elements from\n" +
+              "a copper layer to other layer,\n" +
+              "but you can change elements from\n" +
+              "other Layer to copper layer";
+
+string version = "Version 1.1";
+
+int isLayer = 1, toLayer = 16 ;
+int swapLayer = 0;
+string usedLayer[] = { "NONE" };
+int    usedLayerN[] = { 0 };
+
+string cmd;
+string c;
+
+// check problem by crossing layer
+int checkLayer(int is1, int to1, int swap) {
+   int err;
+   if (is1 == 0 || to1 == 0) return 1;
+      // do not change in Via - Pad - Signal - layer
+   for (int l = 17; l < 20; l++) {
+      if (is1 == l || to1 == l ) return l;
+      if (swap == l) return 3;
+      }
+      // you can not swap other to copper layer and back
+   if ( (is1 >= 20 || to1 >= 20) && (swap < 20 && swap > 0) ) return 3;
+      // do not use duble
+   if (is1 == to1 ) return 2;
+
+      // not use Originlayer
+   if (is1 == 23 || to1 == 23 ) return 23;
+   if (is1 == 24 || to1 == 24 ) return 23;
+   if (is1 < 17 && to1 > 16) return 4;
+   if (is1 > 19 && to1 < 20) return 4;
+   if (is1 == to1) return 2;
+   if (is1 == swap || to1 == swap ) err = 3;
+   if ( (is1 < 20 || to1 < 20) && swap > 16) return 3;
+   if ( (is1 > 19 || to1 > 19) && swap < 20) return 3;
+
+
+   return err;
+   }
+
+
+void change(real x, real y) {
+   sprintf(c, " (%.2f %.2f) ", x, y );
+   cmd += c;
+   return;
+   }
+
+
+void ch_layer(int islay, int tolay, int display) {
+  sprintf(c, ";\nCHANGE LAYER %d;\n", tolay);
+  cmd += c;
+  sprintf(c, "DISPLAY NONE %d;\n", display);
+  cmd += c;
+  sprintf(c, "CHANGE LAYER %d ", tolay);
+  cmd += c;
+  real dx, dy;
+   board(B) {
+      B.signals(S) {
+         S.wires(W) {
+            if (W.layer == islay) {
+               dx = u2mm((W.x1 + W.x2) / 2);
+               dy = u2mm((W.y1 + W.y2) / 2);
+               change(dx, dy);
+               }
+            }
+         S.polygons(P) {
+            P.contours(W) {
+               if (W.layer == islay) {
+                  dx = u2mm(W.x1);
+                  dy = u2mm(W.y1);
+                  change(dx, dy);
+                  break;
+                  }
+               }
+            }
+         }
+      B.wires(W) {
+         if (W.layer == islay) {
+            dx = u2mm((W.x1 + W.x2) / 2);
+            dy = u2mm((W.y1 + W.y2) / 2);
+            change(dx, dy);
+            }
+         }
+      B.polygons(P) {
+         P.contours(W) {
+            if (W.layer == islay) {
+               dx = u2mm(W.x1);
+               dy = u2mm(W.y1);
+               change(dx, dy);
+               break;
+               }
+            }
+         }
+      B.circles(C) {
+         if (C.layer == islay) {
+            dx = u2mm(C.x + C.radius);
+            dy = u2mm(C.y);
+            change(dx, dy);
+            }
+         }
+//      B.arcs(A) {
+//         if (A.layer == islay) {
+//            dx = u2mm(A.x1);
+//            dy = u2mm(A.y1);
+//            change(dx, dy);
+//            }
+//         }
+      B.rectangles(R) {
+         if (R.layer == islay) {
+            dx = u2mm(R.x1);
+            dy = u2mm(R.y1);
+            change(dx, dy);
+            }
+         }
+      B.texts(T) {
+         if (T.layer == islay) {
+            dx = u2mm(T.x);
+            dy = u2mm(T.y);
+            change(dx, dy);
+            }
+         }
+      }
+   return;
+   }
+
+
+void menue(void) {
+   int err = 0;
+   int isLay = 0;
+   int toLay = 0;
+   int swapLay = 0;
+
+   dlgDialog("Swap Layer to Layer") {
+      dlgGroup("Change layer") {
+         dlgHBoxLayout {
+            dlgLabel("&from A");
+            dlgComboBox(usedLayer, isLay);
+            }
+         dlgHBoxLayout {
+            dlgLabel("&to B");
+            dlgComboBox(usedLayer, toLay);
+            }
+         }
+      dlgLabel("If you want to swap layer A <-> B,");
+      dlgHBoxLayout {
+         dlgLabel("select an empty temporary &swap layer");
+         dlgComboBox(usedLayer, swapLay);
+         }
+      dlgLabel(Help);
+      dlgHBoxLayout {
+         dlgPushButton("+&OK") {
+            isLayer = usedLayerN[isLay];
+            toLayer = usedLayerN[toLay];
+            swapLayer = usedLayerN[swapLay];
+            int error = checkLayer(isLayer, toLayer, swapLayer);
+            if (error) {
+               string h;
+               switch (error) {
+                  case  1 : h = "Error: Select layer";
+                     break;
+
+                  case  2 : h = "Error: Select different layer";
+                     break;
+
+                  case  3 : h = "Error: Swap layer";
+                     break;
+
+                  case  4 : h = "Error: Do not mix copper layers with drawing layers";
+                     break;
+
+                  case  5 : h = "Error: Missing Layer";
+                     break;
+
+                  case  6 : h = "Error: Same 'From' layer";
+                     break;
+
+                  case  7 : h = "Error: Same 'To' layer";
+                     break;
+
+                  case 17 : h = "Error: Do not use PAD layer";
+                     break;
+
+                  case 18 : h = "Error: Do not use VIA layer";
+                     break;
+
+                  case 19 : h = "Error: Do not use Signal layer";
+                     break;
+
+                  case 23 : h = "Error: Do not use Origin layer";
+                     break;
+
+                  default : sprintf(h, "Error select layer. #%d", error);
+                  }
+               dlgMessageBox(h, "OK");
+               }
+            else {
+               dlgAccept();
+               return;
+               }
+            }
+         dlgStretch(1);
+         dlgPushButton("-&Cancel") { dlgReject(); exit (0);}
+         }
+      };
+   }
+
+// main
+if (board) board(B) {
+   string displayLayer = ";\nDISPLAY NONE ";
+   int lay = 0;
+   B.layers(L) {
+      string l;
+      if (L.visible) {
+         lay++;
+         usedLayer[lay] = L.name;
+         usedLayerN[lay] = L.number;
+         sprintf( l, "%d", L.number);
+         displayLayer += " " + l;
+         }
+      }
+
+   menue();
+   sprintf(c, "GRID mm FINEST;\n");
+   cmd += c;
+   sprintf(c, "SET UNDO_LOG OFF;\n");
+   cmd += c;
+   if (swapLayer) {
+      ch_layer(isLayer, swapLayer, isLayer);
+      ch_layer(toLayer, isLayer, toLayer);
+      ch_layer(isLayer, toLayer, swapLayer );
+      }
+   else {
+      ch_layer(isLayer, toLayer, isLayer);
+      }
+   sprintf(c, "%s;\n", displayLayer);
+   cmd += c;
+   sprintf(c, ";\nGRID LAST;\nSET UNDO_LOG ON;\n");
+   cmd += c;
+   exit (cmd);
+   }
+
+else {
+   dlgMessageBox("Run this ULP from a Board", "OK");
+   exit (0);
+   }

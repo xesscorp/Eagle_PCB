@@ -1,0 +1,31 @@
+int Top, Bottom;
+string file;
+
+board(B) { 
+  file = filedir(B.name) + "Place_layer_cycle.scr";
+  output(file , "wt")  {
+
+  /*  
+  // cycle door 4 standen
+  B.layers(L) 
+    {
+      if (L.number == LAYER_TPLACE) Top = L.visible;
+      if (L.number == LAYER_BPLACE) Bottom = L.visible;
+    }   
+    if ( Top == 1 && Bottom == 1 ) printf("DISPLAY  tPlace -bPlace\n");
+    if ( Top == 1 && Bottom == 0 ) printf("DISPLAY -tPlace  bPlace\n");
+    if ( Top == 0 && Bottom == 0 ) printf("DISPLAY -tPlace  bPlace\n");
+    if ( Top == 0 && Bottom == 1 ) printf("DISPLAY  tPlace  bPlace\n");
+  */
+
+  // cycle door 2 standen
+  B.layers(L) 
+    {
+      if (L.number == LAYER_TPLACE) Top = L.visible;
+    }   
+    if ( Top == 1 ) printf("DISPLAY -tPlace -bPlace tOrigins bOrigins\n");
+    if ( Top == 0 ) printf("DISPLAY  tPlace  bPlace -tDocu -bDocu -tValues -bValues\n");
+
+  }
+}
+exit("script '" + file + "';");

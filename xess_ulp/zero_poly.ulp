@@ -1,0 +1,21 @@
+string s, zero_poly = "";
+
+board(B)
+{
+	B.polygons(P)
+	{
+		if(P.width==0)
+		{
+			sprintf(s,"Zero width polygon on layer %d\n",P.layer);
+			zero_poly += s;
+		}
+	}
+}
+
+dlgDialog("Zero Width Polygons") {
+     dlgVBoxLayout {
+     dlgLabel("");
+     dlgTextEdit(zero_poly);
+        dlgPushButton("+Ok") dlgAccept();
+        }
+     };

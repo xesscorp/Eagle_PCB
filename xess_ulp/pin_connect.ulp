@@ -1,0 +1,190 @@
+#usage "<b>Connect Named Net Segments to Pins</b>\n"
+       "<p>"
+       "This ULP connects pins in the schematic to short segments of named nets."
+       "<p>"
+       "Usage:<p>"
+       "<blockquote>1. Open a schematic.<p>"
+       "2. Run this ULP with the file containing the net name and pin connections.<p>"
+       "3. Short connection segments will be created for all the given pins and nets.<p></blockquote>"
+       "Note:<p>"
+       "<blockquote>-This ULP outputs the '.scr' temporary file in the same directory as this ULP. It does NOT automatically delete it.<p>"
+       "-This ULP is tested on EAGLE standard ver 4.11 for Windows.<p></blockquote>"
+       "<p>"
+       "<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+#include "useful-routines.ulp"
+
+string lines[];
+string connections[];
+
+void readNetList(void)
+{
+	int pin_cnt = 0;
+	for(int n=0; lines[n]; n++)
+	{
+		if(lines[n][0] == '#')
+			continue;
+		if(strstr(lines[n], "Signal") == 0)
+		{
+			string net_parts[];
+			int signal_cnt = strsplit (net_parts, lines[n], '\'');
+			string net_name = net_parts[1];
+			if((net_name[0]=='N') && (net_name[1]=='$')) continue; // don't process unnamed nets
+			connections[pin_cnt] = net_parts[3] + "." + net_parts[5] + "\t" + net_name;
+			pin_cnt++;
+			n++;
+			while(strstr(lines[n], ";") < 0)
+			{
+				signal_cnt = strsplit (net_parts, lines[n], '\'');
+				connections[pin_cnt] = net_parts[1] + "." + net_parts[3] + "\t" + net_name;
+				pin_cnt++;
+				n++;
+			}
+		}
+		if(strstr(lines[n], "Change") == 0)
+		{
+			;
+		}
+	}
+	return;
+}
+
+
+if(!schematic)
+{
+	dlgMessageBox("Start this ULP from a schematic!", "OK");
+	exit (0);
+}
+
+string part_id, pin_name, net_name;
+int repeat_net = 0;
+int result = dlgDialog(get_ulp_name()) {
+		dlgHBoxLayout
+		{
+			dlgLabel("Part Id: ");
+			dlgStringEdit(part_id);	// get the identifier for the part whose pins need connections
+		}
+		dlgHBoxLayout
+		{
+			dlgLabel("Pin Name: ");
+			dlgStringEdit(pin_name);	// get the identifier for the part pins that need connecting
+		}
+		dlgHBoxLayout
+		{
+			dlgLabel("Net Name: ");
+			dlgStringEdit(net_name);	// get the name of the net to connect to the part pins
+		}
+		dlgHBoxLayout
+		{
+			dlgGroup("Options")
+			{
+				dlgCheckBox("&Repeat Net",repeat_net);
+			}
+		}
+		dlgHBoxLayout
+		{
+			dlgStretch(1);
+			dlgPushButton("+OK")    dlgAccept();
+			dlgPushButton("Cancel") dlgReject();
+		}
+               };
+if(result == 0)
+	exit (0);
+part_id = strupr(part_id);
+pin_name = strupr(pin_name);
+net_name = strupr(net_name);
+
+string script_name = get_project_path() + get_ulp_name() + ".scr";
+output(script_name); // clear script file
+
+output(script_name,"at")
+{
+	printf("SET select_factor 0;\n");	// so we don't pickup anything by mistake
+}
+
+schematic(SCH)
+{
+	int num_net_pins = 0;
+	string pre_existing_net_pins[];
+	SCH.nets(N)
+	{
+		N.pinrefs(P)
+		{
+			if(P.pin.contact)
+				pre_existing_net_pins[num_net_pins++] = P.part.name + "." + P.pin.contact.name; 
+		}
+	}
+	SCH.sheets(SH) /* for each sheet in schematic */
+	{
+		output(script_name,"at")
+		{
+			printf("EDIT .S%d;\n",SH.number);
+		}
+		SH.parts(P) /* for each part in a sheet */
+		{
+			if(P.name != part_id) continue;
+			P.instances(I) /* for each instance of a part */
+			{
+				I.gate.symbol.pins(pin) /* for each pin of a part instance */
+				{
+					// P.name = chip identifier (e.g., "U1")
+					// pin.contact.name = pin number on chip (e.g., "5" or "B13")
+					// pin.x, pin.y = (x,y) location of pin in schematic
+					// pin.angle = orientation of pin (0, 90, 180, 270)
+					if(!pin.contact) continue;
+					string pin_name = P.name + "." + pin.contact.name;
+					if(lookup(pre_existing_net_pins,pin_name,0)) continue;
+					string net_name = lookup(connections,pin_name,1);
+					if(!net_name) continue;
+					real x = u2inch(pin.x);
+					real y = u2inch(pin.y);
+					real dx, dy, tx, ty;
+					string orientation;
+					int num_right_clicks;
+					int angle = trunc(pin.angle);
+					switch(angle)
+					{
+					case 0:
+						dx = -0.1; dy = 0.0; tx = -0.05; ty = 0.035; orientation = "MR0";
+						num_right_clicks = 2;
+						break;
+					case 90:
+						dx = 0.0; dy = -0.1; tx = -0.035; ty = -0.05; orientation = "R270";
+						num_right_clicks = 3;
+						break;
+					case 180:
+						dx = 0.1; dy = 0.0; tx = 0.05; ty = -0.035; orientation = "";
+						num_right_clicks = 0;
+						break;
+					case 270:
+						dx = 0.0; dy = 0.1; tx = 0.035; ty = 0.05; orientation = "R90";
+						num_right_clicks = 1;
+						break;
+					default:
+						break;
+					}
+					output(script_name,"at")
+					{
+						printf("NET \'%s\' (%f %f) (%f %f);\n", net_name, x, y, x+dx, y+dy);
+						// printf("TEXT \'%s\' %s (%f %f);\n", net_name, orientation, x+dx+tx, y+dy+ty); // add text label (not used)
+						real x1 = x + dx;
+						real y1 = y + dy;
+						printf("LABEL (%f %f)",x1,y1);
+						for(int i=0; i<num_right_clicks; i++)
+							printf(" (> %f %f)",x1,y1);
+						printf(" (%f %f);\n",x1+tx,y1+ty);
+					}
+				}
+			}
+		}
+	}
+}
+
+output(script_name,"at")
+{
+	printf("SET select_factor 0.02;\n");	// restore default select factor
+}
+
+exit("SCRIPT '" + script_name + "';\n");

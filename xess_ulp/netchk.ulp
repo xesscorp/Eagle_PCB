@@ -1,0 +1,47 @@
+schematic(SCH)
+{
+ output(filesetext(SCH.name, ".chk"))
+ {
+  SCH.sheets(SH)
+  {
+    printf("Sheet: %d\n", SH.number);
+    SH.nets(N)
+    {
+      N.segments(SEG)
+      {
+        if(N.name == "MASTER_RESET#")
+        {
+          printf("\tNet: %s\n", N.name);
+          SEG.pinrefs(P)
+          {
+            string dir;
+            if(P.pin.direction==PIN_DIRECTION_NC)
+              dir = "NC";
+            else if(P.pin.direction==PIN_DIRECTION_IN)
+              dir = "IN";
+            else if(P.pin.direction==PIN_DIRECTION_OUT)
+              dir = "OUT";
+            else if(P.pin.direction==PIN_DIRECTION_IO)
+              dir = "IO";
+            else if(P.pin.direction==PIN_DIRECTION_OC)
+              dir = "OC";
+            else if(P.pin.direction==PIN_DIRECTION_PWR)
+              dir = "PWR";
+            else if(P.pin.direction==PIN_DIRECTION_PAS)
+              dir = "PAS";
+            else if(P.pin.direction==PIN_DIRECTION_HIZ)
+              dir = "HIZ";
+            else if(P.pin.direction==PIN_DIRECTION_SUP)
+              dir = "SUP";
+            else
+              dir = "???";
+            if(P.pin.direction==PIN_DIRECTION_OUT)
+              printf("connected to: %s, %s, %s, %s\n",
+                 P.part.name, P.instance.name, P.pin.name, dir);
+          }
+        }
+      }
+    }
+  }
+ }
+}

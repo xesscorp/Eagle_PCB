@@ -1,0 +1,48 @@
+schematic(SCH)
+{
+ output(filesetext(SCH.name, ".net"))
+ {
+  int i;
+  int net_cnt = 0;
+  numeric string net[]; 
+  string pins[];
+  SCH.sheets(SH)
+  {
+    SH.nets(N)
+    {
+      for(i=0; i<net_cnt; i++)
+      {
+        if(net[i]==N.name)
+         break;
+      }
+      if(i>=net_cnt)
+        net[net_cnt++] = N.name;
+      N.segments(SEG)
+      {
+        SEG.pinrefs(P)
+        {
+          string dir;
+          switch(P.pin.direction)
+          {
+            case PIN_DIRECTION_NC:  dir = "NC"; break;
+            case PIN_DIRECTION_IN:  dir = "IN"; break;
+            case PIN_DIRECTION_OUT: dir = "OUT"; break;
+            case PIN_DIRECTION_IO:  dir = "IO"; break;
+            case PIN_DIRECTION_OC:  dir = "OC"; break;
+            case PIN_DIRECTION_PWR: dir = "PWR"; break;
+            case PIN_DIRECTION_PAS: dir = "PAS"; break;
+            case PIN_DIRECTION_HIZ: dir = "HIZ"; break;
+            case PIN_DIRECTION_SUP: dir = "SUP"; break;
+            default:                dir = "???"; break;
+          }
+          pins[i] = pins[i] + "\n\t" + P.part.name + "\t" + P.instance.name + "\t" + P.pin.name + "\t" + dir;
+        }
+      }
+    }
+  }
+  int index[];
+  sort(net_cnt,index,net,pins);
+  for(i=0; i<net_cnt; i++)
+    printf("%s%s\n",net[index[i]],pins[index[i]]);
+ }
+}

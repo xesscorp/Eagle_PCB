@@ -1,0 +1,18 @@
+#include "useful-routines.ulp"
+#include "xess-useful-routines.ulp"
+
+string named_nets = "";
+schematic(SCH)
+{
+	SCH.nets(N)
+	{
+		if(strstr(N.name,"$")==-1)
+		{
+			named_nets += N.name + "\n";
+		}
+	}
+}
+
+record_text = named_nets;
+num_errors = 0;
+finish_up();

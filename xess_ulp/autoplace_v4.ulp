@@ -1,0 +1,63 @@
+/* Simple autoplace ulp based upon component position in schematic
+* this ULp was origianlly written by one of the CADSOFT team I believe
+* apologies for lack of full reference and acknoledgement
+* run the ULP in the sch window and run place.scr in BRD
+* changing the scale parameter will produce tighter/looser grouping
+* Ideally stick in a pop-up window to select scale and x/y offset at some time
+*/
+string c,cmd;
+real scale = 1.0;
+int HasPins,
+    IsSupplySymbol,
+    Px, Py, xoffset, yoffset,
+    ix,
+    part_index,                  
+    parts_across = 15, 
+    sheets_across = 4,
+    GridDist = 200,
+    ShOffset = 0,            
+    y_ShOffset = -2000,
+    x_ShOffset = 6000;
+
+                   output("place.scr") {
+			
+                    if (schematic) schematic(SCH) {
+			cmd+= "board; \n";
+                       sprintf(c, "Grid mil 50;\n");
+			cmd+= c;
+                       SCH.sheets(S) {
+                         part_index = 0;
+                         S.parts(P) {
+                           ix = 0;
+                           P.instances(I) {
+                             if (ix==0) {
+                                Py = trunc((scale*part_index)/parts_across) * GridDist;
+                                Px = frac ((scale*part_index)/parts_across) * GridDist * parts_across;
+                                } 
+                             HasPins = 0;
+                             IsSupplySymbol = 0;
+                             I.gate.symbol.pins(PIN) { 
+                               if ((PIN.direction == PIN_DIRECTION_SUP)) 
+                                  IsSupplySymbol = 1;
+                               HasPins = 1;
+                               }
+                             ix++;
+                             }
+                           if (HasPins && !IsSupplySymbol) {
+				xoffset = x_ShOffset*frac ((1.0*(S.number-1))/sheets_across)*sheets_across;
+				yoffset = y_ShOffset*trunc((1.0*(S.number-1))/sheets_across);
+                              sprintf(c, "Move %s (%d %d);\n", P.name, Px+xoffset, Py+yoffset);                           
+				cmd+= c;
+                                part_index++;
+                              }
+                           } // end parts
+                         }   // end sheets 
+    			printf("GRID LAST;\n");
+    			printf("RATSNEST;\n");
+    	              }
+
+                    }
+exit(cmd);
+
+
+

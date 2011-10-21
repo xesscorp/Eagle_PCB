@@ -1,0 +1,339 @@
+// Several errors in this CADSOFT-supplied ULP were fixed by DEVB on 12/20/2005.
+
+
+
+#usage "<b>Generate a copy of Name; Value; Place and Docu layers to user defined layer.</b>\n"
+       "<p>"
+       "Generates a command sequence which copies the silk placement "
+       "of all elements of your layout into newly generated layers (+100). "
+       "After running the ULP you can GROUP, CUT and PASTE your layout "
+       "to get an array of several boards."
+       "<p>"
+       "The duplicated name texts in the new layers will not be changed. "
+       "Please notice that you have to deactivate layers 21 - 28 and 51 - 52,  if you use "
+       "the CAM processor e.g. for generating gerber data. Instead, you have to activate "
+       "the new layers 121 - 152. Thus you get an identical silk screen for all "
+       "your layouts in this array."
+       "<p>"
+       "<author>Author: support@cadsoft.de</author>"
+
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED
+
+int    offset = 100;
+int    tf = 0;
+int    tNames  = 25, bNames  = 26;
+int    tValues = 27, bValues = 28;
+int    tPlace  = 21, tDocu   = 51;
+int    bPlace  = 22, bDocu   = 52;
+string cmd = "SET UNDO_LOG OFF;\n"; // advisable for speed reasons
+string h;
+
+void header(void) {
+  sprintf(h, "layer %d _tNames;\n",  tNames+offset);          // here you can change the new
+  cmd += h;
+  sprintf(h, "layer %d _bNames;\n",  bNames+offset);          // layers names
+  cmd += h;
+  sprintf(h, "layer %d _tValues;\n", tValues+offset);         // here you can change the new
+  cmd += h;
+  sprintf(h, "layer %d _bValues;\n", bValues+offset);         // layers names
+  cmd += h;
+  sprintf(h, "layer %d _tPlace;\n",  tPlace+offset);          // here you can change the new
+  cmd += h;
+  sprintf(h, "layer %d _tDocu;\n",   tDocu+offset);           // layers names
+  cmd += h;
+  sprintf(h, "layer %d _bPlace;\n",  bPlace+offset);          // here you can change the new
+  cmd += h;
+  sprintf(h, "layer %d _bDocu;\n",   bDocu+offset);           // layers names
+  cmd += h;
+  sprintf(h, "set color_layer %d yellow;\n",  tNames+offset); // and
+  cmd += h;
+  sprintf(h, "set color_layer %d magenta;\n", bNames+offset); // colors
+  cmd += h;
+  sprintf(h, "set wire_bend 2;\n");
+  cmd += h;
+  sprintf(h, "\nGRID mil;\n\n");
+  cmd += h;
+}
+
+void DrawWire(UL_WIRE W) {
+  if (W.arc) {
+    h = ""; sprintf(h, "Arc CCW %.3f (%.3f %.3f) (%.3f %.3f) (%.3f %.3f);\n",
+            u2mil(W.width),
+            u2mil(W.arc.x1), u2mil(W.arc.y1),
+            u2mil(W.arc.xc + W.arc.xc - W.arc.x1), u2mil(W.arc.yc + W.arc.yc - W.arc.y1),
+            u2mil(W.arc.x2), u2mil(W.arc.y2));
+     }
+  else  {
+    cmd += h;
+    sprintf(h, "WIRE %.3f (%.3f %.3f) (%.3f %.3f);\n",
+                     u2mil(W.width), u2mil(W.x1), u2mil(W.y1), u2mil(W.x2), u2mil(W.y2) );
+  }
+  cmd += h;
+}
+
+
+
+void DrawCircle(UL_CIRCLE C)
+{
+  sprintf(h, "CHANGE LAYER %d;\n", C.layer + offset );
+  cmd += h;
+  sprintf(h, "Circle %f (%f %f) (%f %f);\n",
+            u2mil(C.width),
+            u2mil(C.x), u2mil(C.y),
+            u2mil(C.x + C.radius), u2mil(C.y));
+  cmd += h;
+}
+
+void DrawRectangle(UL_RECTANGLE R)
+{
+  sprintf(h, "CHANGE LAYER %d;\n", R.layer + offset );
+  cmd += h;
+  sprintf(h, "Rect R%1.0f (%f %f) (%f %f);\n",
+           R.angle,
+           u2mil(R.x1), u2mil(R.y1),
+           u2mil(R.x2), u2mil(R.y2));
+  cmd += h;
+}
+
+void DrawPolygon(UL_POLYGON PL)
+{
+  sprintf(h, "CHANGE LAYER %d;\n", PL.layer + offset );
+  cmd += h;
+  sprintf(h, "Change Isolate %f;\n", u2mil(PL.isolate));
+  cmd += h;
+  sprintf(h, "Change Spacing %f;\n", u2mil(PL.spacing));
+  cmd += h;
+  if (PL.orphans) {
+    sprintf(h, "Change Orphans On;\n");
+    cmd += h;
+  }
+  else {
+    sprintf(h, "Change Orphans Off;\n");
+    cmd += h;
+  }
+  if (PL.thermals) {
+    sprintf(h, "Change Thermals On;\n");
+    cmd += h;
+  }
+  else {
+    sprintf(h, "Change Thermals Off;\n");
+    cmd += h;
+  }
+  if (PL.pour == POLYGON_POUR_SOLID) {
+    sprintf(h, "Change Pour Solid;\n");
+    cmd += h;
+  }
+  else {
+    sprintf(h, "Change Pour Hatch;\n");
+    cmd += h;
+  }
+  sprintf(h, "Polygon %f ", u2mil(PL.width));
+  cmd += h;
+  PL.wires(W) {
+    sprintf(h, "(%f %f) ", u2mil(W.x1), u2mil(W.y1)); cmd += h; /*start coord.*/
+    break;
+    };
+  PL.wires(W) {
+    sprintf(h, " %+f (%f %f)", W.curve, u2mil(W.x2), u2mil(W.y2));
+    cmd += h;
+    };
+  sprintf(h, ";\n"); cmd += h;
+  return;
+}
+
+void DrawText(UL_TEXT T) {
+  string mir = "";
+  if(T.mirror) mir = "M";
+  sprintf(h, "CHANGE LAYER %d;\n", T.layer + offset );
+  cmd += h;
+  sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+  cmd += h;
+  sprintf(h, "Text '%s' %sR%1.0f (%5.3f %5.3f);\n",
+             T.value, mir, T.angle, u2mil(T.x), u2mil(T.y));
+  cmd += h;
+}
+
+void DrawName(UL_TEXT T) {
+  string mir = "";
+  if(T.mirror) mir = "M";
+  sprintf(h, "CHANGE LAYER %d;\n", T.layer + offset );
+  cmd += h;
+  sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+  cmd += h;
+  sprintf(h, "Text '%s' %sR%1.0f (%5.3f %5.3f);\n",
+             T.value, mir, T.angle, u2mil(T.x), u2mil(T.y));
+  cmd += h;
+}
+
+void DrawValue(UL_TEXT T) {
+  string mir = "";
+  if(T.mirror) mir = "M";
+  sprintf(h, "CHANGE LAYER %d;\n", T.layer + offset );
+  cmd += h;
+  sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+  cmd += h;
+  sprintf(h, "Text '%s' %sR%1.0f (%5.3f %5.3f);\n",
+             T.value, mir, T.angle, u2mil(T.x), u2mil(T.y));
+  cmd += h;
+}
+
+if (board) {
+  board(B) {
+    header();
+    B.elements(E) {
+      E.texts(T) {
+          if (T.layer == 25) {
+            h = "";sprintf(h, "Change Layer %d;\n", tNames+offset);
+            cmd += h;
+            sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+            cmd += h;
+            sprintf(h, "Text '%s' R%1.0f (%5.3f %5.3f);\n",
+                    E.name, T.angle, u2mil(T.x), u2mil(T.y));
+            cmd += h;
+          }
+          else if (T.layer == 26) {
+            h = "";sprintf(h, "Change Layer %d;\n", bNames+offset);
+            cmd += h;
+            tf = 0;
+            sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+            cmd += h;
+            sprintf(h, "Text '%s' MR%1.0f (%5.3f %5.3f);\n",
+                    E.name, T.angle, u2mil(T.x), u2mil(T.y));
+            cmd += h;
+          }
+          else if (T.layer == 27) {
+            h = "";sprintf(h, "Change Layer %d;\n", tValues+offset);
+            cmd += h;
+            sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+            cmd += h;
+            sprintf(h, "Text '%s' R%1.0f (%5.3f %5.3f);\n",
+                    E.value, T.angle, u2mil(T.x), u2mil(T.y));
+            cmd += h;
+          }
+          else if (T.layer == 28) {
+            h = "";sprintf(h, "Change Layer %d;\n", bValues+offset);
+            cmd += h;
+            tf = 0;
+            sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+            cmd += h;
+            sprintf(h, "Text '%s' MR%1.0f (%5.3f %5.3f);\n",
+                    E.value, T.angle, u2mil(T.x), u2mil(T.y));
+            cmd += h;
+          }
+          else if (T.layer == 21 || T.layer == 22 || T.layer == 51 || T.layer == 52 ) {
+            DrawText(T);
+          }
+        }
+      E.package.texts(T) {
+        if (T.layer == 25) {
+          h = "";sprintf(h, "Change Layer %d;\n", tNames+offset);
+          cmd += h;
+          sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+          cmd += h;
+          sprintf(h, "Text '%s' R%1.0f (%5.3f %5.3f);\n",
+                  E.name, T.angle, u2mil(T.x), u2mil(T.y));
+          cmd += h;
+        }
+        else if (T.layer == 26) {
+          h = "";sprintf(h, "Change Layer %d;\n", bNames+offset);
+          cmd += h;
+          tf = 0;
+          sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+          cmd += h;
+          sprintf(h, "Text '%s' MR%1.0f (%5.3f %5.3f);\n",
+                  E.name, T.angle, u2mil(T.x), u2mil(T.y));
+          cmd += h;
+        }
+        else if (T.layer == 27) {
+          h = "";sprintf(h, "Change Layer %d;\n", tValues+offset);
+          cmd += h;
+          sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+          cmd += h;
+          sprintf(h, "Text '%s' R%1.0f (%5.3f %5.3f);\n",
+                  E.value, T.angle, u2mil(T.x), u2mil(T.y));
+          cmd += h;
+        }
+        else if (T.layer == 28) {
+          h = "";sprintf(h, "Change Layer %d;\n", bValues+offset);
+          cmd += h;
+          tf = 0;
+          sprintf(h, "Change Size %5.3f;\n", u2mil(T.size));
+          cmd += h;
+          sprintf(h, "Text '%s' MR%1.0f (%5.3f %5.3f);\n",
+                  E.value, T.angle, u2mil(T.x), u2mil(T.y));
+          cmd += h;
+        }
+        else if (T.layer == 21 || T.layer == 22 || T.layer == 51 || T.layer == 52 ) {
+          DrawText(T);
+        }
+      }
+      E.package.wires(W) {
+        if(W.layer == 21 || W.layer == 22 || W.layer == 51 || W.layer == 52) {
+          sprintf(h, "CHANGE LAYER %d;\n", W.layer + offset );
+          cmd += h;
+          DrawWire(W);
+        }
+      }
+      E.package.circles(C) {
+        if(C.layer == 21 || C.layer == 22 || C.layer == 51 || C.layer == 52) {
+          DrawCircle(C);
+        }
+      }
+      E.package.rectangles(R) {
+        if(R.layer == 21 || R.layer == 22 || R.layer == 51 || R.layer == 52) {
+          DrawRectangle(R);
+        }
+      }
+      E.package.polygons(PL) {
+        if(PL.layer == 21 || PL.layer == 22 || PL.layer == 51 || PL.layer == 52) {
+          DrawPolygon(PL);
+        }
+      }
+    }
+    B.texts(T) {
+      if (T.layer == 21 || T.layer == 22 || T.layer == 51 || T.layer == 52) {
+        DrawText(T);
+      }
+    }
+    B.rectangles(R) {
+      if(R.layer == 21 || R.layer == 22 || R.layer == 51 || R.layer == 52) {
+        DrawRectangle(R);
+      }
+    }
+    B.polygons(PL) {
+      if(PL.layer == 21 || PL.layer == 22 || PL.layer == 51 || PL.layer == 52) {
+        DrawPolygon(PL);
+      }
+    }
+    B.circles(C) {
+      if(C.layer == 21 || C.layer == 22 || C.layer == 51 || C.layer == 52) {
+        DrawCircle(C);
+      }
+    }
+    B.wires(W) {
+      if(W.layer == 21 || W.layer == 22 || W.layer == 51 || W.layer == 52) {
+        sprintf(h, "CHANGE LAYER %d;\n", W.layer + offset );
+        cmd += h;
+        DrawWire(W);
+      }
+    }
+  }
+  cmd += "SET UNDO_LOG ON;\n";
+
+  //  EditBox
+  int Result = dlgDialog("Descriptions") {
+    dlgTextEdit(cmd);
+    dlgHBoxLayout {
+      dlgPushButton("+&Execute") dlgAccept();
+      dlgPushButton("-&Cancel") dlgReject();
+    }
+  };
+  if (Result == 0) exit(0);
+
+  exit(cmd);
+}
+
+else {
+   dlgMessageBox("\n    Start this ULP in a Board    \n");
+   exit (0);
+}

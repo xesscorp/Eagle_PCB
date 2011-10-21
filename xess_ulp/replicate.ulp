@@ -1,0 +1,686 @@
+#usage	"<b>Replicate Part Placement and Routing</b>\n"
+	"<p>"
+	"This ULP replicates the placement+routing of one set of parts onto another set of parts."
+	"<p>"
+	"Usage:<p>"
+	"<blockquote>"
+	"1. Place a layer 110 polygon around the parts whose placement and routing is to be replicated.<p>"
+	"2. Place a layer 111 polygon around the parts which are to be moved and routed.<p>"
+	"3. Start this ULP within a board layout.<p>"
+	"4. Enter the X and Y displacement for the final location of the moved parts w.r.t. the stationary parts.<p>"
+	"5. Click on OK.<p>"
+	"</blockquote>"
+	"Note:<p>"
+	"<blockquote>"
+	"This ULP was tested on EAGLE standard ver 4.16 for Windows.<p>"
+	"</blockquote>"
+	"<author>Author: <B>Dave Vanden Bout - devb@xess.com</B></author>"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// THIS PROGRAM IS PROVIDED AS IS AND WITHOUT WARRANTY OF ANY KIND, EXPRESSED OR IMPLIED.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+#include "useful-routines.ulp"
+#include "xess-useful-routines.ulp"
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Global variables and constants.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+int i;
+int grid_unit;
+
+// stationary and moved bounding boxes
+real	stat_bbox_left;
+real	stat_bbox_right;
+real	stat_bbox_bottom;
+real	stat_bbox_top;
+real	move_bbox_left;
+real	move_bbox_right;
+real	move_bbox_bottom;
+real	move_bbox_top;
+
+real	offset_x[], offset_y[];		// offset of moved parts w.r.t. stationary parts
+real	u_offset_x[], u_offset_y[];	// offset expressed in internal units
+real	step_x[], step_y[];		// step of moved parts w.r.t. stationary parts
+real	u_step_x[], u_step_y[];		// step expressed in internal units
+int	num_sections;			// number of sections with distinct offsets and steps
+int	repetitions[];			// number of replications per section
+
+int	STAT_LAYER = 110;		// polygon on this layer surrounds parts whose place+route is copied
+int	MOVE_LAYER = 111;		// polygon on this layer surrounds parts to be moved and routed
+
+string	via_shapes[];
+via_shapes[VIA_SHAPE_SQUARE]	= "square";
+via_shapes[VIA_SHAPE_ROUND]	= "round";
+via_shapes[VIA_SHAPE_OCTAGON]	= "octagon";
+via_shapes[VIA_SHAPE_ANNULUS]	= "annulus";
+via_shapes[VIA_SHAPE_THERMAL]	= "thermal";
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Subroutines.
+/////////////////////////////////////////////////////////////////////////////////////////
+	
+//////////////////////////////////////////////////////////////////////////
+// Break a string into words, sort the words, concatenate them, and return the resulting string.
+//////////////////////////////////////////////////////////////////////////
+string sort_string(string s)
+{
+	numeric string w[];
+	int n = strsplit(w,s,' ');
+	if(w[n-1] == "")
+		n--;
+	sort(n,w);
+	string sorted_s = "";
+	for(int i=0; i<n; i++)
+		sorted_s += w[i] + " ";
+	return sorted_s;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Break a string into words, sort the words, concatenate them, and return the resulting string.
+//////////////////////////////////////////////////////////////////////////
+void record_part_move(string move_part_name, int pos_x, int pos_y, int mirror)
+{
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Record a wire.
+//////////////////////////////////////////////////////////////////////////
+void record_wire(UL_WIRE W, UL_ELEMENT E)
+{
+	if(W.layer > bot_layer || W.layer < top_layer)
+		return;
+	int layer = mirror_layer(W.layer,E.mirror);
+	int x1 = int(untranslate_x(W.x1,W.y1,E));	
+	int y1 = int(untranslate_y(W.x1,W.y1,E));	
+	int x2 = int(untranslate_x(W.x2,W.y2,E));	
+	int y2 = int(untranslate_y(W.x2,W.y2,E));	
+	sprintf(tmp,"WIRE %d %d %d %d %d %d\n",layer,W.width,x1,y1,x2,y2);
+	script_text += tmp;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// Record a via.
+//////////////////////////////////////////////////////////////////////////
+void record_via(UL_VIA V, UL_ELEMENT E)
+{
+	int x = int(untranslate_x(V.x,V.y,E));	
+	int y = int(untranslate_y(V.x,V.y,E));
+	sprintf(tmp,"VIA %d %d %d %d %d %d\n",V.diameter[top_layer],V.drill,
+		mirror_layer(V.start,E.mirror),mirror_layer(V.end,E.mirror),x,y);
+	script_text += tmp;
+}
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+// Start of the main routine.
+/////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////
+
+if(!board)
+	report_errors("Start this ULP from a board layout!");
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Get input parameters from the user.
+/////////////////////////////////////////////////////////////////////////////////////////
+int result = dlgDialog("Replicate")
+{
+	dlgHBoxLayout
+	{
+		dlgLabel("Number of sections: ");
+		dlgIntEdit(num_sections);	// get the number of sections to replicate into
+	}
+	dlgHBoxLayout
+	{
+		dlgStretch(1);
+		dlgPushButton("+OK")    dlgAccept();
+		dlgPushButton("Cancel") dlgReject();
+		dlgStretch(1);
+	}
+};
+
+// abort if the cancel button was pressed
+if(result == 0)
+	exit (0);
+
+result = dlgDialog("Replicate")
+{
+	for(i=0; i<num_sections; i++)
+	{
+		string section_name;
+		sprintf(section_name, "Section %d", i+1);
+		dlgGroup(section_name)
+		{
+			dlgHBoxLayout
+			{
+				dlgLabel("Repetitions: ");
+				dlgIntEdit(repetitions[i]);
+			}
+			dlgHBoxLayout
+			{
+				dlgLabel("X offset: ");
+				dlgRealEdit(offset_x[i],-REAL_MAX,REAL_MAX);	// get the horiz. offset of the moved parts w.r.t. the stationary parts
+				dlgLabel(" X step: ");
+				dlgRealEdit(step_x[i],-REAL_MAX,REAL_MAX);	// get the horiz. step of the moved parts w.r.t. the stationary parts
+			}
+			dlgHBoxLayout
+			{
+				dlgLabel("Y offset: ");
+				dlgRealEdit(offset_y[i],-REAL_MAX,REAL_MAX);	// get the vert. offset of the moved parts w.r.t. the stationary parts
+				dlgLabel(" Y step: ");
+				dlgRealEdit(step_y[i],-REAL_MAX,REAL_MAX);	// get the vert. step of the moved parts w.r.t. the stationary parts
+			}
+		}
+	}
+	dlgHBoxLayout
+	{
+		dlgStretch(1);
+		dlgPushButton("+OK")    dlgAccept();
+		dlgPushButton("Cancel") dlgReject();
+		dlgStretch(1);
+	}
+};
+
+// abort if the cancel button was pressed
+if(result == 0)
+	exit (0);
+
+/*
+/////////////////////////////////////////////////////////////////////////////////////////
+// Display the input parameters.
+/////////////////////////////////////////////////////////////////////////////////////////
+string parameter_list;
+for(i=0; i<num_sections; i++)
+{
+	string s;
+	sprintf(s,"Section %d: %d %f %f %f %f\n",i,repetitions[i],offset_x[i],step_x[i],offset_y[i],step_y[i]);
+	parameter_list += s;
+}
+result = dlgDialog("Input Parameters") {
+	dlgVBoxLayout
+	{
+		dlgTextView(parameter_list);	
+		dlgPushButton("+OK") dlgAccept();
+	}
+};
+*/
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Post-process the input parameters.
+/////////////////////////////////////////////////////////////////////////////////////////
+board(B)
+{
+	grid_unit = B.grid.unit;
+}
+for(i=0; i<num_sections; i++)
+{
+	switch(grid_unit)
+	{
+	case GRID_UNIT_MIC:
+		u_offset_x[i] = u_per_mic * offset_x[i];
+		u_offset_y[i] = u_per_mic * offset_y[i];
+		u_step_x[i]   = u_per_mic * step_x[i];
+		u_step_y[i]   = u_per_mic * step_y[i];
+		break;
+	case GRID_UNIT_MM:
+		u_offset_x[i] = u_per_mm * offset_x[i];
+		u_offset_y[i] = u_per_mm * offset_y[i];
+		u_step_x[i]   = u_per_mm * step_x[i];
+		u_step_y[i]   = u_per_mm * step_y[i];
+		break;
+	case GRID_UNIT_MIL:
+		u_offset_x[i] = u_per_mil * offset_x[i];
+		u_offset_y[i] = u_per_mil * offset_y[i];
+		u_step_x[i]   = u_per_mil * step_x[i];
+		u_step_y[i]   = u_per_mil * step_y[i];
+		break;
+	case GRID_UNIT_INCH:
+		u_offset_x[i] = u_per_inch * offset_x[i];
+		u_offset_y[i] = u_per_inch * offset_y[i];
+		u_step_x[i]   = u_per_inch * step_x[i];
+		u_step_y[i]   = u_per_inch * step_y[i];
+		break;
+	default:
+		dlgMessageBox("Unknown units");
+		break;
+	}
+}
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// The main loop.
+/////////////////////////////////////////////////////////////////////////////////////////
+board(B)
+{
+	//////////////////////////////////////////////////////////////////////
+	// Find the bounding boxes for the stationary and moving parts
+	//////////////////////////////////////////////////////////////////////
+	stat_bbox_left		= INT_MAX;
+	stat_bbox_right		= INT_MIN;
+	stat_bbox_bottom	= INT_MAX;
+	stat_bbox_top		= INT_MIN;
+	move_bbox_left		= INT_MAX;
+	move_bbox_right		= INT_MIN;
+	move_bbox_bottom	= INT_MAX;
+	move_bbox_top		= INT_MIN;
+	B.rectangles(R)
+	{
+		if(R.layer == STAT_LAYER)
+		{
+			stat_bbox_left = min(stat_bbox_left, R.x1);
+			stat_bbox_right = max(stat_bbox_right, R.x2);
+			stat_bbox_bottom = min(stat_bbox_bottom, R.y1);
+			stat_bbox_top = max(stat_bbox_top, R.y2);
+		}
+		else if(R.layer == MOVE_LAYER)
+		{
+			move_bbox_left = min(move_bbox_left, R.x1);
+			move_bbox_right = max(move_bbox_right, R.x2);
+			move_bbox_bottom = min(move_bbox_bottom, R.y1);
+			move_bbox_top = max(move_bbox_top, R.y2);
+		}
+	}
+	B.polygons(P)
+	{
+		if(P.layer == STAT_LAYER)
+		{
+			P.wires(W)
+			{
+				stat_bbox_left = min(stat_bbox_left, W.x1);
+				stat_bbox_right = max(stat_bbox_right, W.x1);
+				stat_bbox_bottom = min(stat_bbox_bottom, W.y1);
+				stat_bbox_top = max(stat_bbox_top, W.y1);
+			}
+		}
+		else if(P.layer == MOVE_LAYER)
+		{
+			P.wires(W)
+			{
+				move_bbox_left = min(move_bbox_left, W.x1);
+				move_bbox_right = max(move_bbox_right, W.x1);
+				move_bbox_bottom = min(move_bbox_bottom, W.y1);
+				move_bbox_top = max(move_bbox_top, W.y1);
+			}
+		}
+	}
+	
+	if(in_bbox(move_bbox_left,move_bbox_bottom,stat_bbox_left,stat_bbox_bottom,stat_bbox_right,stat_bbox_top) ||
+		in_bbox(move_bbox_right,move_bbox_top,stat_bbox_left,stat_bbox_bottom,stat_bbox_right,stat_bbox_top) ||
+		in_bbox(stat_bbox_left,stat_bbox_bottom,move_bbox_left,move_bbox_bottom,move_bbox_right,move_bbox_top) ||
+		in_bbox(stat_bbox_right,stat_bbox_top,move_bbox_left,move_bbox_bottom,move_bbox_right,move_bbox_top))
+	{
+		error_text += "Stationary and movement bounding boxes overlap\n";
+		num_errors++;
+	}
+	report_errors("");
+	
+	//////////////////////////////////////////////////////////////////////
+	// Find the part names, values, and package names within the bounding boxes
+	//////////////////////////////////////////////////////////////////////
+	string stat_part_name[], stat_part_value[], move_part_pckg_name[];
+	string move_part_name[], move_part_value[], stat_part_pckg_name[];
+	int num_stat_parts = 0;
+	int num_move_parts = 0;
+	B.elements(E)
+	{
+		if(in_bbox(E.x,E.y,stat_bbox_left,stat_bbox_bottom,stat_bbox_right,stat_bbox_top))
+		{
+			stat_part_name[num_stat_parts]      = E.name;
+			stat_part_pckg_name[num_stat_parts] = E.package.name;
+			stat_part_value[num_stat_parts]     = E.value;
+			num_stat_parts++;
+		}
+		if(in_bbox(E.x,E.y,move_bbox_left,move_bbox_bottom,move_bbox_right,move_bbox_top))
+		{
+			move_part_name[num_move_parts]      = E.name;
+			move_part_pckg_name[num_move_parts] = E.package.name;
+			move_part_value[num_move_parts]     = E.value;
+			num_move_parts++;
+		}
+	}
+
+	//////////////////////////////////////////////////////////////////////
+	// Find the stationary parts that potentially match with each moving part.
+	//////////////////////////////////////////////////////////////////////
+	string matches[];	// index by move_part and entry contain name of matching stat_part
+	int num_matches[];	// used for detecting parts that match multiple stationary parts or none at all
+	for(i=0; i<num_move_parts; i++)
+	{
+		// if the part has no value, then select potential matches based on the name prefix
+		// and the name of the part package
+		if(move_part_value[i] == "")
+		{
+			string move_prefix = get_prefix(move_part_name[i]);
+			for(int j=0; j<num_stat_parts; j++)
+			{
+				if(move_prefix == get_prefix(stat_part_name[j]) &&
+					move_part_pckg_name[i] == stat_part_pckg_name[j])
+				{
+					if(matches[i] != "")
+						matches[i] += " ";
+					matches[i] += stat_part_name[j];
+					num_matches[i]++;
+				}
+			}
+		}
+		// otherwise, select potential matches if the stationary and moving parts have the same value
+		else
+		{
+			for(int j=0; j<num_stat_parts; j++)
+			{
+				if(move_part_value[i] == stat_part_value[j])
+				{
+					if(matches[i] != "")
+						matches[i] += " ";
+					matches[i] += stat_part_name[j];
+					num_matches[i]++;
+				}
+			}
+		}
+	}
+
+	//////////////////////////////////////////////////////////////////////
+	// Sort the list of potential matches for each moving part to make it
+	// easier to find moving parts that have the same list of potential matches.
+	//////////////////////////////////////////////////////////////////////
+	for(i=0; i<num_move_parts; i++)
+		if(num_matches[i] > 1)
+			matches[i] = sort_string(matches[i]);
+	
+	//////////////////////////////////////////////////////////////////////
+	// Find all the moving parts that have the same potential match list.
+	// Then sort the similar moving parts.  Then match them sequentially
+	// with the match list of stationary parts.
+	//////////////////////////////////////////////////////////////////////
+	for(i=0; i<num_move_parts; i++)
+	{
+		if(num_matches[i] > 1)	// don't bother unless the moving part has multiple possible matches
+		{
+			// collect the names of all moving parts with identical match lists
+			string similar_move_part_list = move_part_name[i];
+			for(int j=i+1; j<num_move_parts; j++)
+				if(matches[j] == matches[i])
+				{
+					if(similar_move_part_list != "")
+						similar_move_part_list += " ";
+					similar_move_part_list += move_part_name[j];
+				}
+			// sort the similar parts
+			similar_move_part_list = sort_string(similar_move_part_list);
+			// break apart the list of similar moving parts 
+			string similar_move_part_name[];
+			int n = strsplit(similar_move_part_name,similar_move_part_list,' ');
+			// break apart the list of stationary parts that are potential matches 
+			string similar_stat_part_match[];
+			int m = strsplit(similar_stat_part_match,matches[i],' ');
+			if(similar_stat_part_match[m-1] == "")
+				m--;
+			// match each moving part with the next entry in the list of potential matches
+			for(int r=0; r<n; r++)
+				for(j=i; j<num_move_parts; j++)
+					if(move_part_name[j] == similar_move_part_name[r])
+					{
+						matches[j] = similar_stat_part_match[r%m];
+						num_matches[j] = 1;
+						break;
+					}
+		}
+	}
+
+	//////////////////////////////////////////////////////////////////////
+	// Find all the moving parts matched to the same stationary part
+	// and assign the step multiplier.
+	//////////////////////////////////////////////////////////////////////
+	int move_part_mult[];
+	move_part_mult[0] = 0;
+	for(i=1; i<num_move_parts; i++)
+	{
+//		move_part_mult[i] = 1;
+		move_part_mult[i] = 0;
+		for(int j=i-1; j>=0; j--)
+		{
+			if(matches[j] == matches[i])
+			{
+				move_part_mult[i] = move_part_mult[j] + 1;
+				break;
+			}
+		}
+	}			
+	
+/*
+	//////////////////////////////////////////////////////////////////////
+	// Display moving parts and their matching stationary part.
+	//////////////////////////////////////////////////////////////////////
+	string match_part_list;
+	for(i=0; i<num_move_parts; i++)
+		match_part_list += move_part_name[i] + " " + matches[i] + "\n";
+	result = dlgDialog("Matching Parts") {
+		dlgVBoxLayout
+		{
+			dlgTextView(match_part_list);	
+			dlgPushButton("+OK") dlgAccept();
+		}
+	};
+
+	//////////////////////////////////////////////////////////////////////
+	// Display moving parts and their displacement multipliers.
+	//////////////////////////////////////////////////////////////////////
+	string mult_list;
+	for(i=0; i<num_move_parts; i++)
+	{
+		string s;
+		sprintf(s,"%s: %d\n",move_part_name[i],move_part_mult[i]);
+		mult_list += s;
+	}
+	result = dlgDialog("Moving Part Multipliers") {
+		dlgVBoxLayout
+		{
+			dlgTextView(mult_list);	
+			dlgPushButton("+OK") dlgAccept();
+		}
+	};
+*/
+
+	//////////////////////////////////////////////////////////////////////
+	// Match the signals of the moving parts to the signals of the stationary parts.
+	//////////////////////////////////////////////////////////////////////
+	string move_signal_name[], stat_signal_name[];
+	int move_signal_mult[];
+	int num_signal_matches = 0;
+	B.elements(ME)
+	{
+		for(i=0; i<num_move_parts; i++)
+		{
+			if(move_part_name[i] == ME.name)
+			{
+				// now we've found a particular moving part
+				B.elements(SE)
+				{
+					if(matches[i] == SE.name)
+					{
+						// now we've found the stationary part that matches with the moving part
+						ME.package.contacts(MC) // go thru the contacts on the moving part
+						{
+							if(MC.signal == "")
+								continue; // skip contacts that aren't connected to a signal
+							for(int j=0; j<num_signal_matches; j++)
+								if(MC.signal == move_signal_name[j] && move_part_mult[i] == move_signal_mult[j])
+									break; // skip this contact if the attached signal has already been matched
+							if(j == num_signal_matches)
+							{
+								SE.package.contacts(SC) // go thru the contacts on the stationary part
+								{
+									if(SC.name == MC.name)
+									{
+										// now we've found the contact on the stationary
+										// part that matches the contact on the moving part
+										if(SC.signal != "")
+										{
+											move_signal_name[num_signal_matches] = MC.signal;
+											stat_signal_name[num_signal_matches] = SC.signal;
+											move_signal_mult[num_signal_matches] = move_part_mult[i];
+											num_signal_matches++;
+										}
+										break; // stop search after matching contacts are found
+									}
+								}
+							}
+						}
+						break; // stop search after matching stationary part was found in board elements
+					}
+				}
+				break; // stop search after moving part was found in board elements
+			}
+		}
+	}
+
+/*
+	//////////////////////////////////////////////////////////////////////
+	// Display matching signals.
+	//////////////////////////////////////////////////////////////////////
+	string match_signal_list;
+	for(i=0; i<num_signal_matches; i++)
+		match_signal_list += move_signal_name[i] + " " + stat_signal_name[i] + "\n";
+	result = dlgDialog("Matching Signals") {
+		dlgVBoxLayout
+		{
+			dlgTextView(match_signal_list);	
+			dlgPushButton("+OK") dlgAccept();
+		}
+	};
+*/
+
+	//////////////////////////////////////////////////////////////////////
+	// Setup the script.
+	//////////////////////////////////////////////////////////////////////
+	script_text = "GRID MIC FINEST;\n";
+	script_text += "SET WIRE_BEND 2;\n"; // do point-to-point wiring with no wire-bend interpretation
+
+	//////////////////////////////////////////////////////////////////////
+	// Create the script to move all the moving parts into the same position
+	// as the stationary parts + (X,Y) offset and (X,Y) step.
+	//////////////////////////////////////////////////////////////////////
+	B.elements(ME)
+	{
+		for(i=0; i<num_move_parts; i++)
+		{
+			if(ME.name == move_part_name[i])
+			{
+				B.elements(SE)
+				{
+					if(SE.name == matches[i])
+					{
+						string tmp;
+						sprintf(tmp,"ROTATE =R%.1f \'%s\';\n",SE.angle,ME.name);
+						script_text += tmp;
+						int mult = move_part_mult[i];
+						for(int j=0; j<num_sections; j++)
+						{
+							if(mult<repetitions[j])
+								break;
+							else
+								mult -= repetitions[j];
+						}
+						sprintf(tmp,"MOVE \'%s\' (%f %f);\n",ME.name,
+							(SE.x+mult*u_step_x[j]+u_offset_x[j])/u_per_mic,
+							(SE.y+mult*u_step_y[j]+u_offset_y[j])/u_per_mic);
+						script_text += tmp;
+						if(SE.mirror)
+						{
+							sprintf(tmp,"MIRROR \'%s\';\n",ME.name);
+							script_text += tmp;
+						}
+						break;
+					}
+				}
+				break;
+			}
+		}
+	}
+	
+	////////////////////////////////////////////////////////////////////////////////////////
+	// Process the signals to find those connected to stationary parts and having a wire segment
+	// with at least one endpoint in the part bounding box.
+	////////////////////////////////////////////////////////////////////////////////////////
+	B.signals(SS)
+	{
+		for(i=0; i<num_signal_matches; i++)
+		{
+			if(SS.name == stat_signal_name[i])
+			{
+				SS.vias(SV) // output vias before wires to prevent air-wires in the moved parts 
+				{
+					if(in_bbox(SV.x,SV.y,stat_bbox_left,stat_bbox_bottom,stat_bbox_right,stat_bbox_top))
+					{
+						int mult = move_signal_mult[i];
+						for(int j=0; j<num_sections; j++)
+						{
+							if(mult<repetitions[j])
+								break;
+							else
+								mult -= repetitions[j];
+						}
+						sprintf(tmp,"VIA \'%s\' %f %s %d-%d (%f %f);\n", move_signal_name[i],
+							1.0*SV.diameter[SV.start]/u_per_mic,
+							via_shapes[SV.shape[SV.start]],
+							SV.start, SV.end,
+							(SV.x + mult*u_step_x[j]+u_offset_x[j])/u_per_mic, (SV.y + mult*u_step_y[j]+u_offset_y[j])/u_per_mic); 
+						script_text += tmp;
+						sprintf(tmp,"CHANGE DRILL %f (%f %f);\n",
+							1.0*SV.drill/u_per_mic,
+							(SV.x + mult*u_step_x[j]+u_offset_x[j])/u_per_mic, (SV.y + mult*u_step_y[j]+u_offset_y[j])/u_per_mic); 
+						script_text += tmp;
+					}
+				}
+				SS.wires(SW)
+				{
+					if(SW.layer < LAYER_TOP || SW.layer > LAYER_BOTTOM)
+						continue; // skip wires not in valid wiring layers
+					if(in_bbox(SW.x1,SW.y1,stat_bbox_left,stat_bbox_bottom,stat_bbox_right,stat_bbox_top) ||
+					   in_bbox(SW.x2,SW.y2,stat_bbox_left,stat_bbox_bottom,stat_bbox_right,stat_bbox_top))
+					{
+						int mult = move_signal_mult[i];
+						for(int j=0; j<num_sections; j++)
+						{
+							if(mult<repetitions[j])
+								break;
+							else
+								mult -= repetitions[j];
+						}
+						sprintf(tmp,"LAYER %d;\n", SW.layer);
+						script_text += tmp;
+						sprintf(tmp,"WIRE \'%s\' %f (%f %f) (%f %f);\n", move_signal_name[i],
+							(SW.width*1.0)/u_per_mic,
+							(SW.x1 + mult*u_step_x[j]+u_offset_x[j])/u_per_mic, (SW.y1 + mult*u_step_y[j]+u_offset_y[j])/u_per_mic, 
+							(SW.x2 + mult*u_step_x[j]+u_offset_x[j])/u_per_mic, (SW.y2 + mult*u_step_y[j]+u_offset_y[j])/u_per_mic); 
+						script_text += tmp;
+					}
+				}
+			}
+		}
+	}
+
+	//////////////////////////////////////////////////////////////////////
+	// Finalize the script.
+	//////////////////////////////////////////////////////////////////////
+	script_text += "RATSNEST;\n";
+	script_text += "GRID LAST;\n";
+
+}
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Store the recorded fanout if no errors were found.
+/////////////////////////////////////////////////////////////////////////////////////////
+
+finish_up();
+

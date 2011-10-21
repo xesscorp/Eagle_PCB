@@ -1,0 +1,67 @@
+/*
+ *  This EAGLE User Language Program prints the number of net's and the
+ *  number of the signals on each net of a board or a schematic.
+ *
+ *  (c) infratec plus GmbH 1998
+ *      by BKK@infratec-plus.de
+ */
+
+if (board) board(B)
+{
+ int netcnt = 0;
+ string Warning;
+
+ output(filesetext(B.name, ".cnt"))
+ {
+  printf("%s\n\n", EAGLE_SIGNATURE);
+  printf("Netcount exported from %s at %s\n\n", B.name, t2string(time()));
+  printf("%s %-*s %s\n\n", "Count", SIGNAL_NAME_LENGTH, "Net", "Number of Signals");
+
+  B.signals(S)
+  {
+   int cnt = 0; 
+   
+   S.contactrefs(C)
+   {
+    cnt++;
+   }  
+
+   if(cnt == 1) Warning = "Please check !!!"; else Warning = "";
+
+   netcnt++;
+   printf("%5d %-*s %8d           %s\n", netcnt, SIGNAL_NAME_LENGTH, S.name, cnt, Warning);
+  }
+ }
+}
+
+
+if (schematic) schematic(SCH)
+{
+ int netcnt = 0;
+ string Warning;
+
+ output(filesetext(SCH.name, ".cnt"))
+ {
+  printf("%s\n\n", EAGLE_SIGNATURE);
+  printf("Netcount exported from %s at %s\n\n", SCH.name, t2string(time()));
+  printf("%s %-*s %s\n\n", "Count", SIGNAL_NAME_LENGTH, "Net", "Number of Signals");
+
+  SCH.nets(N)
+  {
+   int cnt = 0;
+
+   N.pinrefs(P) 
+   {
+    cnt++;
+   }
+
+   if(cnt == 1) Warning = "Please check !!!"; else Warning = "";
+
+   netcnt++;
+
+   printf("%5d %-*s %8d           %s\n", netcnt, NET_NAME_LENGTH, N.name, cnt, Warning);
+  }
+ }
+}
+
+
