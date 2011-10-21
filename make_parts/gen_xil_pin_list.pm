@@ -41,7 +41,7 @@ sub gen_xil_pin_list {
         "LHCLK/DUAL" => 3,
         "RHCLK"      => 4,
         "RHCLK/DUAL" => 4,
-	"PWRMGT"     => 5,
+        "PWRMGT"     => 5,
     );
 
     my %pin_list;
@@ -213,13 +213,13 @@ sub gen_xil_pin_list_3 {
         "^VCCINT"  => 5,
         "^PWRMGMT" => 6,
         "^PWRMGT"  => 6,
-	"^SUSPEND" => 6,
+        "^SUSPEND" => 6,
         "^PROG"    => 0,
         "^DONE"    => 0,
-        "^TCK\$"    => 0,
-        "^TMS\$"    => 0,
-        "^TDI\$"    => 0,
-        "^TDO\$"    => 0,
+        "^TCK\$"   => 0,
+        "^TMS\$"   => 0,
+        "^TDI\$"   => 0,
+        "^TDO\$"   => 0,
         "^IP"      => 7,
         "^IO"      => 8,
         "^VREF"    => 9,
@@ -241,10 +241,10 @@ sub gen_xil_pin_list_3 {
         "^SUSPEND" => IN,
         "^PROG"    => IN,
         "^DONE"    => OUT,
-        "^TCK\$"    => IN,
-        "^TMS\$"    => IN,
-        "^TDI\$"    => IN,
-        "^TDO\$"    => OUT,
+        "^TCK\$"   => IN,
+        "^TMS\$"   => IN,
+        "^TDI\$"   => IN,
+        "^TDO\$"   => OUT,
         "^IP"      => IN,
         "^IO"      => IO,
         "^VREF"    => IN,
@@ -267,10 +267,9 @@ sub gen_xil_pin_list_3 {
         my ( $pin_number, $pin_name ) =
           ( split( /,/, $_ ) )[ $pin_number_column, $pin_name_column ];
         my $found = 0;
-		my $pin_type;
-        foreach $pin_type ( keys %pin_types ){
-            if ( $pin_name =~ /$pin_type/ )
-            {
+        my $pin_type;
+        foreach $pin_type ( keys %pin_types ) {
+            if ( $pin_name =~ /$pin_type/ ) {
                 $pin_list{properties}{$pin_number}{name} = $pin_name;
                 $pin_list{properties}{$pin_number}{type} =
                   $pin_types{$pin_type};
@@ -278,9 +277,77 @@ sub gen_xil_pin_list_3 {
                   $swap_levels{$pin_type};
                 $found = 1;
             }
-          }
-          if ( !$found )
-        {
+        }
+        if ( !$found ) {
+            print STDERR "Unknown pin type: $pin_type $pin_name\n";
+            $err = 1;
+        }
+    }
+
+    if ($err) {
+        die("\nUnknown pin types!\n");
+    }
+
+    return %pin_list;
+}
+
+####################################################################################
+# Generate a pin list from a Xilinx FPGA pin TXT file.
+####################################################################################
+sub gen_xil_pin_list_4 {
+    my ($pin_file) = @_;
+
+    # read the entire CSV file
+    open( FP, $pin_file ) || die( $pin_file . ": " . $! );
+    my @lines = <FP>;
+    close(FP);
+
+    shift(@lines);    # remove header lines;
+    shift(@lines);
+    shift(@lines);
+    shift(@lines);
+
+    my %pin_types = (
+        "NC\$"          => [ 'NC',  1 ],
+        "GND\$"         => [ 'IN',  2 ],
+        "VCCAUX\$"      => [ 'IN',  3 ],
+        "VCCO_[0-9]+\$" => [ 'IN',  4 ],
+        "VCCINT\$"      => [ 'IN',  5 ],
+        "PROGRAM"       => [ 'IN',  6 ],
+        "DONE"          => [ 'OUT', 7 ],
+        "CMPCS_B"       => [ 'IN',  8 ],
+        "SUSPEND\$"     => [ 'IN',  9 ],
+        "TCK\$"         => [ 'IN',  10 ],
+        "TMS\$"         => [ 'IN',  11 ],
+        "TDI\$"         => [ 'IN',  12 ],
+        "TDO\$"         => [ 'OUT', 13 ],
+        "IO_"           => [ 'IO',  14 ],
+    );
+
+    my $pin_number_column = 0;
+    my $pin_name_column   = 3;
+    my %pin_list;
+    my $err = 0;
+    $pin_list{default_name}       = '';
+    $pin_list{default_swap_level} = 0;
+    foreach (@lines) {
+        chomp;
+        /^\s*$/ && last;
+        my ( $pin_number, $pin_name ) =
+          ( split( /\s+/, $_ ) )[ $pin_number_column, $pin_name_column ];
+        my $found = 0;
+        my $pin_type;
+        foreach $pin_type ( keys %pin_types ) {
+            if ( $pin_name =~ /^$pin_type/ or $pin_name =~ /_$pin_type/ ) {
+                $pin_list{properties}{$pin_number}{name} = $pin_name;
+                $pin_list{properties}{$pin_number}{'type'} =
+                  $pin_types{$pin_type}[0];
+                $pin_list{properties}{$pin_number}{swap_level} =
+                  $pin_types{$pin_type}[1];
+                $found = 1;
+            }
+        }
+        if ( !$found ) {
             print STDERR "Unknown pin type: $pin_type $pin_name\n";
             $err = 1;
         }

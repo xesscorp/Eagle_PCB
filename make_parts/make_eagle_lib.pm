@@ -1703,8 +1703,8 @@ Text '>GATE' R0 (5.715 -1.016);
                         $swap_level = $pin_swap_levels{$pin_id};
                     }
                     my $pin_type = $default_pin_type;
-                    if ( defined $pin_types{$pin_num} ) {
-                        $pin_type = $pin_types{$pin_num};
+                    if ( defined $pin_types{$pin_id} ) {
+                        $pin_type = $pin_types{$pin_id};
                     }
                     if ( defined $pin_names{$pin_id} ) {
                         $eagle_script .=
