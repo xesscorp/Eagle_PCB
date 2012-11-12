@@ -19,7 +19,8 @@ schematic(SCH) {
 	string sep = "";
 	int    found;
 
-	FileName = filesetext("bom", ".json");
+	FileName = dlgFileSave("Save BOM in JSON format","bom.json");
+//	FileName = filesetext("bom", ".json");
 
 	output(FileName, "wt") {
 		printf("{\n");

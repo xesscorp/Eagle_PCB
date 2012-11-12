@@ -728,17 +728,19 @@ string GetDigikeyPrice(string PartNumber, int Quantity)
 {
     string Html;
     if(PartNumber == "")
-    return "";
-//    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?Detail&name="+PartNumber,40) >= 0)
-    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&site=us&keywords="+PartNumber,40) >= 0)
+        return "";
+    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?Detail&name="+PartNumber,40) >= 0)
+//    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&site=us&keywords="+PartNumber,40) >= 0)
     {
+//        output("HTML.htm","at") { printf("%s\n\n//////\n\n",Html); }
+//        return "0.0";
         int StartPos = strstr(Html,"Extended Price");
         if(StartPos < 0)
-        return "A???";
+            return "A???";
         Html = strsub(Html, StartPos+strlen("Extended Price"));
         int EndPos = strstr(Html,"</table>");
         if(EndPos < 0)
-        return "B???";
+            return "B???";
         Html = strsub(Html,0,EndPos);
         string Line[];
         int NumLines = strsplit(Line,Html,'\n');
