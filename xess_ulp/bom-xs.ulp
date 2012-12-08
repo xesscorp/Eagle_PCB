@@ -241,7 +241,7 @@ int Selected;
 real TotalDigikeyPrice = -1.0;
 real UnitDigikeyPrice = -1.0;
 
-enum { ltParts, ltValues, ltManf, ltManfDisti, ltDigikey, ltMouser, ltLabels }; // List Types
+enum { ltParts, ltValues, ltManf, ltManfDisti, ltDigikey, ltMouser, ltLabels, ltSeeed }; // List Types
 enum { ofText, ofHTML, ofCSV }; // Output Formats
 int ListType = 0;
 int OutputFormat = 0;
@@ -334,6 +334,46 @@ void GeneratePartList(void)
             Lines[NumLines] += "\t" + DatabaseLookup(key, f);
             Lines[NumLines] += "\t" + key; // hidden field!
         }
+        NumLines++;
+    }
+    Lines[NumLines] = "";
+}
+
+void GenerateSeeedList(void)
+{
+    int NumLines = 0;
+
+    //XXX column sequence?
+    Lines[NumLines++] = "#\tRef. Des.\tQty\tCatalog\tDesc.\tValue\tPackage\tManufacturer\tManf. Part#\tDistributor\tDist. Part#\t$unit\tPrice Break" + DatabaseHeader();
+    string Quantity, ItemNum, DistName, DistPartNumber;
+    sprintf(Quantity, "%d", BuildQty);
+    for (int i = 0; i < NumParts; i++) {
+        sprintf(ItemNum,"%d",i+1);
+        if (PartDigikeyNumber[i] != "") {
+            DistName = "Digi-Key";
+            DistPartNumber = PartDigikeyNumber[i];
+        }
+        else if (PartMouserNumber[i] != "") {
+            DistName = "Mouser";
+            DistPartNumber = PartMouserNumber[i];
+        }
+        else {
+            DistName = "";
+            DistPartNumber = "";
+        }
+        Lines[NumLines] = ItemNum + "\t" + 
+                          PartName[i] + "\t" + 
+                          "1" + "\t" + 
+                          "" + "\t" +
+                          PartDevice[i] + "\t" +
+                          PartValue[i] + "\t" +
+                          PartPackage[i] + "\t" +
+                          PartManf[i] + "\t" +
+                          PartManfNumber[i] + "\t" +
+                          DistName + "\t" + 
+                          DistPartNumber + "\t" +
+                          "0.00" + "\t" +
+                          Quantity;
         NumLines++;
     }
     Lines[NumLines] = "";
@@ -575,6 +615,7 @@ void GenerateList(void)
     case ltManf:      GenerateManfList();         break;
     case ltManfDisti: GenerateManfDistiList();    break;
     case ltMouser:    GenerateMouserOrderList();  break;
+    case ltSeeed:     GenerateSeeedList();        break;
     case ltDigikey:   GenerateDigikeyOrderList(); break;
     case ltLabels:    GenerateLabels();           break;
     }
@@ -1085,6 +1126,7 @@ dlgDialog("Bill Of Material - v" + Version) {
             dlgRadioButton("Manf+Distributors", ListType) GenerateManfDistiList();
             dlgRadioButton("Digikey Order", ListType) GenerateDigikeyOrderList();
             dlgRadioButton("Mouser Order", ListType) GenerateMouserOrderList();
+            dlgRadioButton("Seeed BOM", ListType) GenerateSeeedList();
             dlgRadioButton("Part Kit Labels", ListType) GenerateLabels();
         }
         dlgGroup("Output Format") {
