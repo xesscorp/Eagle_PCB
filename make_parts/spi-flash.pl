@@ -1,7 +1,7 @@
 use make_eagle_lib;
 use gen_xil_pin_list;
 
-#print make_symbols();
+print make_symbols();
 
 print make_qfp_pckg(
     name           => 'SPI-8_SOIC_150',
@@ -18,7 +18,6 @@ print make_qfp_pckg(
     num_pads_x     => 0,
     chip_x         => 6.2,
     chip_y         => 5.0,
-    add_fiducials  => 0,
 );
 
 print make_qfp_pckg(
@@ -36,13 +35,12 @@ print make_qfp_pckg(
     num_pads_x     => 0,
     chip_x         => 7.9,
     chip_y         => 5.3,
-    add_fiducials  => 0,
 );
 
 print make_qfp_pckg(
     name           => 'SPI-8_SOIC_150_208',
     title          => '8-Lead 150/208-Mil Plastic Small Outline Package',
-    desc           => '',
+    desc           => 'Compatible with both 150 and 208 mil chips.',
     units          => mm,
     contact_width  => 0.51,
     pad_width      => 0.51,
@@ -54,7 +52,6 @@ print make_qfp_pckg(
     num_pads_x     => 0,
     chip_x         => 7.9,
     chip_y         => 5.3,
-    add_fiducials  => 0,
 );
 
 %device = (

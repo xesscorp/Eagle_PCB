@@ -3,9 +3,9 @@ use List::Util qw[min max];
 
 BEGIN {
 
-#############################################################################################
+    #############################################################################################
     # Static variables for these subroutines.
-#############################################################################################
+    #############################################################################################
 
     # Common constants.
     use constant DIR_X => 1;    # x increases going right
@@ -65,9 +65,8 @@ BEGIN {
     use constant PCKG_MIN_SOLDERMASK_WIDTH => 20;
     use constant PCKG_KEEPOUT_WIDTH        => 0;
     use constant PCKG_FONT_SIZE            => 70;
-    use constant PCKG_DIAGONAL             =>
-      50;    # length of silkscreen diagonal demarking pin 1
-    use constant PCKG_PIN1_SIZE => 15;    # radius of circle denoting pin #1
+    use constant PCKG_DIAGONAL             => 50;    # length of silkscreen diagonal demarking pin 1
+    use constant PCKG_PIN1_SIZE            => 15;    # radius of circle denoting pin #1
 
     # Device constants and definitions.
     use constant DVC_DEFAULT_PREFIX => 'U';
@@ -91,11 +90,11 @@ BEGIN {
         $bga_row_nums{ $bga_row_ids[$i] } = $i;
     }
 
-#############################################################################################
+    #############################################################################################
     # Create symbols for
     #    1) the device name/value, and
     #    2) for a single-pin gate that will be used for each device pin.
-#############################################################################################
+    #############################################################################################
     sub make_symbols {
         my ($eagle_script) = "
 		Grid mil;
@@ -175,7 +174,7 @@ BEGIN {
 		";
 
         #############################################################################################
-# Override the previous pin gate symbols using these hand-drawn ones that were exported.
+        # Override the previous pin gate symbols using these hand-drawn ones that were exported.
         #############################################################################################
         $eagle_script = "
 Set Wire_Bend 2;
@@ -367,7 +366,7 @@ Text '>GATE' R0 (5.715 -1.016);
         return $eagle_script;
     }
 
-#############################################################################################
+    #############################################################################################
     # Create BGA package.
     # Arguments:
     #	name
@@ -383,7 +382,7 @@ Text '>GATE' R0 (5.715 -1.016);
     #	add_fiducials
     #	knockouts
     #	relabel
-#############################################################################################
+    #############################################################################################
     sub make_bga_pckg {
         my (%args) = @_;
         for ( keys %args ) {
@@ -504,11 +503,11 @@ Text '>GATE' R0 (5.715 -1.016);
 		";
 
         #############################################################################################
-    # Place fiducials at diagonal corners of the package.
-    # (c1x,c1y should still hold the location of the box corner near pin 1.)
-    # (c2x,c2y should still hold the location of the box corner opposite pin 1.)
+        # Place fiducials at diagonal corners of the package.
+        # (c1x,c1y should still hold the location of the box corner near pin 1.)
+        # (c2x,c2y should still hold the location of the box corner opposite pin 1.)
         #############################################################################################
-        if ($add_fiducials) {
+        if ($add_fiducials eq yes) {
             my ($f1x) =
               $c1x - ( $fiducial_diameter + $outline_width ) / 2.0 * $dir_x;
             my ($f1y) =
@@ -561,9 +560,9 @@ Text '>GATE' R0 (5.715 -1.016);
         return $eagle_script;
     }
 
-#############################################################################################
-# Helper function for determining how many soldermask windows to cut into a large pad.
-#############################################################################################
+    #############################################################################################
+    # Helper function for determining how many soldermask windows to cut into a large pad.
+    #############################################################################################
     sub find_num_windows {
         my ( $pad_size, $min_window_size, $max_window_size ) = @_;
         my ($min_num_windows) = int( $pad_size / $max_window_size );
@@ -573,7 +572,7 @@ Text '>GATE' R0 (5.715 -1.016);
         #	return max(1,int(($min_num_windows + $max_num_windows)/2));
     }
 
-#############################################################################################
+    #############################################################################################
     # Create QFP package.
     # Arguments:
     #	name
@@ -599,30 +598,17 @@ Text '>GATE' R0 (5.715 -1.016);
     #	extra_pads
     #	outline: 'inside' (default) or 'outside'
     #	mark_pin1: 'no' (default) or 'yes'
-#############################################################################################
+    #############################################################################################
     sub make_qfp_pckg {
         my (%args) = @_;
         for ( keys %args ) {
             $$_ = $args{$_};
         }
-		$mark_pin1 = $args{mark_pin1};
-		$outline = $args{outline};
-
-        my ($is_quad) = ( defined($D1) && defined($E1) )
-          || ( defined($ND) && defined($NE) );
-        my ($is_dil) = !$is_quad;
-
-        !defined $num_pads_x && ( $num_pads_x = $ND );
-        !defined $num_pads_y && ( $num_pads_y = $NE );
-
-        if ( $is_quad && ( !defined $num_pads_x && !defined $num_pads_y ) ) {
-            $num_pads_x = $N / 4;
-            $num_pads_y = $N / 4;
-        }
-        if ( $is_dil && ( !defined $num_pads_x && !defined $num_pads_y ) ) {
-            $num_pads_x = $N / 2;
-            $num_pads_y = 0;
-        }
+        
+        $num_pads_x = $num_pads_x + $ND;
+        $num_pads_y = $num_pads_y + $NE;
+        $is_dil = $num_pads_x == 0 or $num_pads_y == 0;
+        $is_quad = !$is_dil;
 
         !defined $chip_x         && ( $chip_x         = $D );
         !defined $chip_y         && ( $chip_y         = $E );
@@ -671,9 +657,8 @@ Text '>GATE' R0 (5.715 -1.016);
 
         #############################################################################################
         # Orient a DIL chip so pins run along left and right sides.
-		# And don't rotate chip if extra pads are defined because they have absolute coordinates.
         #############################################################################################
-        if ( $num_pads_y == 0 and !defined($extra_pads) ) {
+        if ( $num_pads_y == 0 ) {
             ( $num_pads_x, $num_pads_y ) = ( $num_pads_y, $num_pads_x );
             ( $chip_x,     $chip_y )     = ( $chip_y,     $chip_x );
         }
@@ -702,8 +687,8 @@ Text '>GATE' R0 (5.715 -1.016);
 		";
 
         #############################################################################################
- # Compute the lengths of the top/bottom and left/right rows of pads.
- # Also compute the overhang of the chip bounding box past the bbox of the pads.
+        # Compute the lengths of the top/bottom and left/right rows of pads.
+        # Also compute the overhang of the chip bounding box past the bbox of the pads.
         #############################################################################################
         my ($pads_y)     = max( 0, $num_pads_y - 1 ) * $pad_spacing;
         my ($overhang_y) = ( $chip_y - $pads_y ) / 2.0;
@@ -717,32 +702,29 @@ Text '>GATE' R0 (5.715 -1.016);
         my ( $x, $y ) = ( $origin_x, $origin_y );
         $x += ( ( $back_porch - $front_porch ) / 2.0 ) * $dir_x;
         my ( $c1x, $c1y, $c2x, $c2y );    # corner points of pad rectangles
-        for (
-            ;
-            $pad_num <= $num_pads_y ;
-            $pad_num++, $y -= $pad_spacing * $dir_y
-          )
-        {
+        for ( ; $pad_num <= $num_pads_y ; $pad_num++, $y -= $pad_spacing * $dir_y ) {
 
-            # Create pads only in the populated positions.
-            next if $is_knockout{$pad_num};
             my $label = $$relabel{$pad_num};
             !defined $label && ( $label = $pad_num );
-			my $pinlabel = $pin_name_prefix . $label;
-            $eagle_script .= "
-			Layer $pad_layer;
-			Smd '$pinlabel' $pad_length $pad_width $roundness ($x $y);
-			";
+            my $pinlabel = $pin_name_prefix . $label;
 
             # Pad outline on document layer.
             $c1x = $x - $pad_length / 2.0 * $dir_x;
             $c2x = $c1x + $pad_length * $dir_x;
             $c1y = $y - $pad_width / 2.0 * $dir_y;
             $c2y = $c1y + $pad_width * $dir_y;
-            $eagle_script .= "
-			Layer $doc_layer;
-			Rect ($c1x $c1y) ($c2x $c2y);
-			";
+
+            # Create pads only in the populated positions.
+            if ( !defined $is_knockout{$pad_num} ) {
+                $eagle_script .= "
+                Layer $pad_layer;
+                Smd '$pinlabel' $pad_length $pad_width $roundness ($x $y);
+                ";
+                $eagle_script .= "
+                Layer $doc_layer;
+                Rect ($c1x $c1y) ($c2x $c2y);
+                ";
+            }
 
             # keep location of pin 1 so we can mark it later on the silkscreen
             if ( $label eq '1' ) {
@@ -755,35 +737,31 @@ Text '>GATE' R0 (5.715 -1.016);
         # Create the bottom row of QFP pads.
         #############################################################################################
         $x = $origin_x + ( $overhang_x - $contact_length / 2.0 ) * $dir_x;
-        $y = $origin_y - ( $pads_y + $overhang_y - $contact_length / 2.0 ) *
-          $dir_y;
+        $y = $origin_y - ( $pads_y + $overhang_y - $contact_length / 2.0 ) * $dir_y;
         $y += ( ( $back_porch - $front_porch ) / 2.0 ) * $dir_y;
-        for (
-            ;
-            $pad_num <= $num_pads_y + $num_pads_x ;
-            $pad_num++, $x += $pad_spacing * $dir_x
-          )
-        {
+        for ( ; $pad_num <= $num_pads_y + $num_pads_x ; $pad_num++, $x += $pad_spacing * $dir_x ) {
 
-            # Create pads only in the populated positions.
-            next if $is_knockout{$pad_num};
             my $label = $$relabel{$pad_num};
             !defined $label && ( $label = $pad_num );
-			my $pinlabel = $pin_name_prefix . $label;
-            $eagle_script .= "
-			Layer $pad_layer;
-			Smd '$pinlabel' $pad_width $pad_length $roundness ($x $y);
-			";
+            my $pinlabel = $pin_name_prefix . $label;
 
             # Pad outline on document layer.
             $c1x = $x - $pad_width / 2.0 * $dir_x;
             $c2x = $c1x + $pad_width * $dir_x;
             $c1y = $y - $pad_length / 2.0 * $dir_y;
             $c2y = $c1y + $pad_length * $dir_y;
-            $eagle_script .= "
-			Layer $doc_layer;
-			Rect ($c1x $c1y) ($c2x $c2y);
-			";
+
+            # Create pads only in the populated positions.
+            if( !defined $is_knockout{$pad_num} ) {
+                $eagle_script .= "
+                Layer $pad_layer;
+                Smd '$pinlabel' $pad_width $pad_length $roundness ($x $y);
+                ";
+                $eagle_script .= "
+                Layer $doc_layer;
+                Rect ($c1x $c1y) ($c2x $c2y);
+                ";
+            }
 
             # keep location of pin 1 so we can mark it later on the silkscreen
             if ( $label eq '1' ) {
@@ -798,32 +776,29 @@ Text '>GATE' R0 (5.715 -1.016);
         $x = $origin_x + ( $chip_x - $contact_length ) * $dir_x;
         $y = $origin_y - $pads_y * $dir_y;
         $x -= ( ( $back_porch - $front_porch ) / 2.0 ) * $dir_x;
-        for (
-            ;
-            $pad_num <= 2 * $num_pads_y + $num_pads_x ;
-            $pad_num++, $y += $pad_spacing * $dir_y
-          )
-        {
+        for ( ; $pad_num <= 2 * $num_pads_y + $num_pads_x ; $pad_num++, $y += $pad_spacing * $dir_y ) {
 
-            # Create pads only in the populated positions.
-            next if $is_knockout{$pad_num};
             my $label = $$relabel{$pad_num};
             !defined $label && ( $label = $pad_num );
-			my $pinlabel = $pin_name_prefix . $label;
-            $eagle_script .= "
-			Layer $pad_layer;
-			Smd '$pinlabel' $pad_length $pad_width $roundness ($x $y);
-			";
+            my $pinlabel = $pin_name_prefix . $label;
 
             # Pad outline on document layer.
             $c1x = $x - $pad_length / 2.0 * $dir_x;
             $c2x = $c1x + $pad_length * $dir_x;
             $c1y = $y - $pad_width / 2.0 * $dir_y;
             $c2y = $c1y + $pad_width * $dir_y;
-            $eagle_script .= "
-			Layer $doc_layer;
-			Rect ($c1x $c1y) ($c2x $c2y);
-			";
+
+            # Create pads only in the populated positions.
+            if( !defined $is_knockout{$pad_num} ) {
+                $eagle_script .= "
+                Layer $pad_layer;
+                Smd '$pinlabel' $pad_length $pad_width $roundness ($x $y);
+                ";
+                $eagle_script .= "
+                Layer $doc_layer;
+                Rect ($c1x $c1y) ($c2x $c2y);
+                ";
+            }
 
             # keep location of pin 1 so we can mark it later on the silkscreen
             if ( $label eq '1' ) {
@@ -835,36 +810,32 @@ Text '>GATE' R0 (5.715 -1.016);
         #############################################################################################
         # Create the top row of QFP pads.
         #############################################################################################
-        $x = $origin_x + ( $chip_x - $overhang_x - $contact_length / 2.0 ) *
-          $dir_x;
+        $x = $origin_x + ( $chip_x - $overhang_x - $contact_length / 2.0 ) * $dir_x;
         $y = $origin_y + ( $overhang_y - $contact_length / 2.0 ) * $dir_y;
         $y -= ( ( $back_porch - $front_porch ) / 2.0 ) * $dir_y;
-        for (
-            ;
-            $pad_num <= 2 * ( $num_pads_x + $num_pads_y ) ;
-            $pad_num++, $x -= $pad_spacing * $dir_x
-          )
-        {
+        for ( ; $pad_num <= 2 * ( $num_pads_x + $num_pads_y ) ; $pad_num++, $x -= $pad_spacing * $dir_x ) {
 
-            # Create pads only in the populated positions.
-            next if $is_knockout{$pad_num};
             my $label = $$relabel{$pad_num};
             !defined $label && ( $label = $pad_num );
-			my $pinlabel = $pin_name_prefix . $label;
-            $eagle_script .= "
-			Layer $pad_layer;
-			Smd '$pinlabel' $pad_width $pad_length $roundness ($x $y);
-			";
+            my $pinlabel = $pin_name_prefix . $label;
 
             # Pad outline on document layer.
             $c1x = $x - $pad_width / 2.0 * $dir_x;
             $c2x = $c1x + $pad_width * $dir_x;
             $c1y = $y - $pad_length / 2.0 * $dir_y;
             $c2y = $c1y + $pad_length * $dir_y;
-            $eagle_script .= "
-			Layer $doc_layer;
-			Rect ($c1x $c1y) ($c2x $c2y);
-			";
+
+            # Create pads only in the populated positions.
+            if( !defined $is_knockout{$pad_num} ) {
+                $eagle_script .= "
+                Layer $pad_layer;
+                Smd '$pinlabel' $pad_width $pad_length $roundness ($x $y);
+                ";
+                $eagle_script .= "
+                Layer $doc_layer;
+                Rect ($c1x $c1y) ($c2x $c2y);
+                ";
+            }
 
             # keep location of pin 1 so we can mark it later on the silkscreen
             if ( $label eq '1' ) {
@@ -889,7 +860,7 @@ Text '>GATE' R0 (5.715 -1.016);
             my $new_label  = $$relabel{$label};
             defined $new_label && ( $label = $new_label );
 
-            if ( defined $use_copper and $use_copper ) {
+            if ( defined $use_copper and $use_copper eq yes ) {
                 $eagle_script .= "
 					Layer $pad_layer;
 					Smd '$label' 0.025 0.025 -0 ($center_x $center_y);
@@ -1063,8 +1034,8 @@ Text '>GATE' R0 (5.715 -1.016);
         }
 
         #############################################################################################
-# Generate the placeholder for the device label.
-# (c1x,c1y should still hold the location of the keepout box corner near pin 1.)
+        # Generate the placeholder for the device label.
+        # (c1x,c1y should still hold the location of the keepout box corner near pin 1.)
         #############################################################################################
         $eagle_script .= "
 			Layer $name_layer;
@@ -1076,9 +1047,9 @@ Text '>GATE' R0 (5.715 -1.016);
 			";
 
         #############################################################################################
-       # Place fiducials at pin 1 corner and the diagonal corner of the package.
+        # Place fiducials at pin 1 corner and the diagonal corner of the package.
         #############################################################################################
-        if ($add_fiducials) {
+        if ($add_fiducials eq yes) {
             $c1x = $origin_x;
             $c2x = $c1x + $fiducial_diameter / 2.0 * $dir_x;
             if ( $num_pads_x == 0 ) {    # DIL chip
@@ -1129,7 +1100,7 @@ Text '>GATE' R0 (5.715 -1.016);
         return $eagle_script;
     }
 
-#############################################################################################
+    #############################################################################################
     # Create DIL package.
     # Arguments:
     #	name
@@ -1149,7 +1120,7 @@ Text '>GATE' R0 (5.715 -1.016);
     #	extra_pads
     #	outline: 'inside' (default) or 'outside'
     #	mark_pin1: 'no' (default) or 'yes'
-#############################################################################################
+    #############################################################################################
     sub make_dil_pckg {
         my (%args) = @_;
         for ( keys %args ) {
@@ -1159,6 +1130,8 @@ Text '>GATE' R0 (5.715 -1.016);
 		$args{outline} = $args{outline};
 
         my ( $pin1x, $pin1y );
+        
+        ($chip_y, $chip_x) = ($chip_x, $chip_y);
 
         #############################################################################################
         # Predefined parameters.
@@ -1212,8 +1185,8 @@ Text '>GATE' R0 (5.715 -1.016);
 		";
 
         #############################################################################################
- # Compute the lengths of the left/right rows of pads.
- # Also compute the overhang of the chip bounding box past the bbox of the pads.
+        # Compute the lengths of the left/right rows of pads.
+        # Also compute the overhang of the chip bounding box past the bbox of the pads.
         #############################################################################################
         my ($pads_y)     = max( 0, $num_pads / 2 - 1 ) * $pad_spacing;
         my ($overhang_y) = ( $chip_y - $pads_y ) / 2.0;
@@ -1230,32 +1203,29 @@ Text '>GATE' R0 (5.715 -1.016);
         my ($first_flag) = "FIRST";
         my ( $x, $y ) = ( $origin_x, $origin_y );
         my ( $c1x, $c1y, $c2x, $c2y );    # corner points of pad rectangles
-        for (
-            ;
-            $pad_num <= $num_pads / 2 ;
-            $pad_num++, $y -= $pad_spacing * $dir_y
-          )
-        {
+        for ( ; $pad_num <= $num_pads / 2 ; $pad_num++, $y -= $pad_spacing * $dir_y ) {
 
-            # Create pads only in the populated positions.
-            next if $is_knockout{$pad_num};
             my $label = $$relabel{$pad_num};
             !defined $label && ( $label = $pad_num );
-            $eagle_script .= "
-			  Change Drill $pad_drill
-              Pad '$label' $pad_size $pad_shape $first_flag ($x $y);\n
-			  ";
-            $first_flag = "";
 
             # Pad outline on document layer.
             $c1x = $x - $pad_size / 2.0 * $dir_x;
             $c2x = $c1x + $pad_size * $dir_x;
             $c1y = $y - $pad_size / 2.0 * $dir_y;
             $c2y = $c1y + $pad_size * $dir_y;
-            $eagle_script .= "
-			Layer $doc_layer;
-			Rect ($c1x $c1y) ($c2x $c2y);
-			";
+            
+            # Create pads only in the populated positions.
+            if ( !defined $is_knockout{$pad_num} ) {
+                $eagle_script .= "
+                Change Drill $pad_drill
+                Pad '$label' $pad_size $pad_shape $first_flag ($x $y);\n
+                ";
+                $eagle_script .= "
+                Layer $doc_layer;
+                Rect ($c1x $c1y) ($c2x $c2y);
+                ";
+                $first_flag = "";
+            }
 
             # keep location of pin 1 so we can mark it later on the silkscreen
             if ( $label eq '1' ) {
@@ -1269,29 +1239,29 @@ Text '>GATE' R0 (5.715 -1.016);
         #############################################################################################
         $x = $origin_x + $chip_x * $dir_x;
         $y = $origin_y - ( $num_pads / 2 - 1 ) * $pad_spacing * $dir_y;
-        for ( ;
-            $pad_num <= $num_pads ; $pad_num++, $y += $pad_spacing * $dir_y )
-        {
+        for ( ; $pad_num <= $num_pads ; $pad_num++, $y += $pad_spacing * $dir_y ) {
 
-            # Create pads only in the populated positions.
-            next if $is_knockout{$pad_num};
             my $label = $$relabel{$pad_num};
             !defined $label && ( $label = $pad_num );
-            $eagle_script .= "
-			  Change Drill $pad_drill
-              Pad '$label' $pad_size $pad_shape $first_flag ($x $y);\n
-			  ";
-            $first_flag = "";
 
             # Pad outline on document layer.
             $c1x = $x - $pad_size / 2.0 * $dir_x;
             $c2x = $c1x + $pad_size * $dir_x;
             $c1y = $y - $pad_size / 2.0 * $dir_y;
             $c2y = $c1y + $pad_size * $dir_y;
-            $eagle_script .= "
-			Layer $doc_layer;
-			Rect ($c1x $c1y) ($c2x $c2y);
-			";
+            
+            # Create pads only in the populated positions.
+            if ( !defined $is_knockout{$pad_num} ) {
+                $eagle_script .= "
+                Change Drill $pad_drill
+                Pad '$label' $pad_size $pad_shape $first_flag ($x $y);\n
+                ";
+                $eagle_script .= "
+                Layer $doc_layer;
+                Rect ($c1x $c1y) ($c2x $c2y);
+                ";
+                $first_flag = "";
+            }
 
             # keep location of pin 1 so we can mark it later on the silkscreen
             if ( $label eq '1' ) {
@@ -1411,8 +1381,8 @@ Text '>GATE' R0 (5.715 -1.016);
         }
 
         #############################################################################################
-# Generate the placeholder for the device label.
-# (c1x,c1y should still hold the location of the keepout box corner near pin 1.)
+        # Generate the placeholder for the device label.
+        # (c1x,c1y should still hold the location of the keepout box corner near pin 1.)
         #############################################################################################
         $eagle_script .= "
 			Layer $name_layer;
@@ -1424,9 +1394,9 @@ Text '>GATE' R0 (5.715 -1.016);
 			";
 
         #############################################################################################
-       # Place fiducials at pin 1 corner and the diagonal corner of the package.
+        # Place fiducials at pin 1 corner and the diagonal corner of the package.
         #############################################################################################
-        if ($add_fiducials) {
+        if ($add_fiducials eq yes) {
             $c1x = $origin_x;
             $c2x = $c1x + $fiducial_diameter / 2.0 * $dir_x;
             $c1y = $origin_y + ( $pad_size + $fiducial_diameter ) * $dir_y;
@@ -1461,7 +1431,7 @@ Text '>GATE' R0 (5.715 -1.016);
         return $eagle_script;
     }
 
-#############################################################################################
+    #############################################################################################
     # Create device.
     #	device
     #		name
@@ -1475,7 +1445,7 @@ Text '>GATE' R0 (5.715 -1.016);
     #		default_type
     #		properties
     #		knockouts
-#############################################################################################
+    #############################################################################################
     sub make_device {
         my (%args) = @_;
         for ( keys %args ) {
@@ -1485,19 +1455,17 @@ Text '>GATE' R0 (5.715 -1.016);
         my ($default_pin_name) = $$pins{default_name};
         !defined($default_pin_name) && ( $default_pin_name = DEFAULT_PIN_NAME );
         my ($default_swap_level) = $$pins{default_swap_level};
-        !defined($default_swap_level)
-          && ( $default_swap_level = DEFAULT_SWAP_LEVEL );
+        !defined($default_swap_level) && ( $default_swap_level = DEFAULT_SWAP_LEVEL );
         my ($default_pin_type) = $$pins{default_type};
         !defined($default_pin_type) && ( $default_pin_type = DEFAULT_PIN_TYPE );
         my ($pin_properties) = $$pins{properties};
         my ($knockouts)      = $$pins{knockouts};
 
         my ($device_name)   = $$device{name};
-        my ($device_prefix) =
-          $$device{prefix} ? $$device{prefix} : DVC_DEFAULT_PREFIX;
-        my ($device_title) = $$device{title};
-        my ($device_desc)  = $$device{desc};
-        my ($pckgs)        = $$device{pckgs};
+        my ($device_prefix) = $$device{prefix} ? $$device{prefix} : DVC_DEFAULT_PREFIX;
+        my ($device_title)  = $$device{title};
+        my ($device_desc)   = $$device{desc};
+        my ($pckgs)         = $$device{pckgs};
 
         print STDERR "$device_name\n";
 
@@ -1505,7 +1473,7 @@ Text '>GATE' R0 (5.715 -1.016);
         # Determine the type of package used by the device.
         #############################################################################################
         my ( $is_dil, $is_qfp, $is_bga ) = ( 0, 0, 0 );
-        my $num_pins = 0;    # for DIL packages
+        my $num_pins = 0;
         my ( $num_pins_x, $num_pins_y ) = ( 0, 0 );    # for QFP packages
         my ( $num_rows,   $num_cols )   = ( 0, 0 );    # for BGA packages
         for (@$pckgs) {
@@ -1520,11 +1488,13 @@ Text '>GATE' R0 (5.715 -1.016);
                 $is_qfp     = 1;
                 $num_pins_x = $pckg{num_pads_x};
                 $num_pins_y = $pckg{num_pads_y};
+                $num_pins   = 2 * ($num_pins_x + $num_pins_y);
             }
             elsif ( $pckg{num_rows} > 0 || $pckg{num_cols} > 0 ) {
                 $is_bga   = 1;
                 $num_rows = $pckg{num_rows};
                 $num_cols = $pckg{num_cols};
+                $num_pins = $num_rows * $num_cols;
             }
         }
 
@@ -1536,13 +1506,14 @@ Text '>GATE' R0 (5.715 -1.016);
         my ($dir_y) = DIR_Y;
 
         #############################################################################################
-# Compute the spacing between the gates that are associated with the device pins.
-# (The following are always in mils.)
+        # Compute the spacing between the gates that are associated with the device pins.
+        # (The following are always in mils.)
         #############################################################################################
         my ($gate_spacing_x) = DVC_GATE_SPACING_X;
         my ($gate_spacing_y) = DVC_GATE_SPACING_Y;
         my ( $min_part_x, $min_part_y ) = ( $origin_x, $origin_y );
         my ( $max_part_x, $max_part_y ) = ( DVC_MAX_X, DVC_MAX_Y );
+        # Decrease the gate spacing if there are too many rows and/or columns.
         if ( $num_cols * $gate_spacing_x > $max_part_x - $min_part_x ) {
             $gate_spacing_x = ( $max_part_x - $min_part_x ) / $num_cols;
         }
@@ -1559,17 +1530,40 @@ Text '>GATE' R0 (5.715 -1.016);
         # Pull apart the pin properties into separate arrays.
         #############################################################################################
         my ( %pin_names, %pin_swap_levels, %pin_types, %pin_extras );
+        # First, create arrays with default values for all pins.
+        if ($is_bga) { # BGA package.
+            foreach my $row ( 0 .. $num_rows-1 ) {
+                $row_id = $bga_row_ids[$row];
+                foreach my $col ( 1 .. $num_cols ) {
+                    my $pin_num = $row_id . $col;
+                    $pin_names{$pin_num} = $default_pin_name;
+                    $pin_swap_levels{$pin_num} = $default_swap_level;
+                    $pin_types{$pin_num} = $default_pin_type;
+                    $pin_types{$pin_num} =~ tr/a-z/A-Z/;
+                    $pin_extras{$pin_num} = undef;
+                }
+            }
+        }
+        else { # Must be DIL or QFP package if it's not a BGA.
+            foreach my $pin_num (1 .. $num_pins) {
+                $pin_names{$pin_num} = $default_pin_name;
+                $pin_swap_levels{$pin_num} = $default_swap_level;
+                $pin_types{$pin_num} = $default_pin_type;
+                $pin_types{$pin_num} =~ tr/a-z/A-Z/;
+                $pin_extras{$pin_num} = undef;
+            }
+        }
+        # Now load specific data into the pin properties.
         foreach my $pin_num ( keys %$pin_properties ) {
             $pin_names{$pin_num}       = ${ $$pin_properties{$pin_num} }{name};
-            $pin_swap_levels{$pin_num} =
-              ${ $$pin_properties{$pin_num} }{swap_level};
-            $pin_types{$pin_num} = ${ $$pin_properties{$pin_num} }{type};
-            $pin_types{$pin_num} =~ tr/a-z/A-Z/;
-            $pin_extras{$pin_num} = ${ $$pin_properties{$pin_num} }{extra};
+            $pin_swap_levels{$pin_num} = ${ $$pin_properties{$pin_num} }{swap_level};
+            $pin_types{$pin_num}       = ${ $$pin_properties{$pin_num} }{type};
+            $pin_types{$pin_num}       =~ tr/a-z/A-Z/;
+            $pin_extras{$pin_num}      = ${ $$pin_properties{$pin_num} }{extra};
         }
 
         #############################################################################################
-  # Differentiate pins with the same name by adding '@n' to the end of the name.
+        # Differentiate pins with the same name by adding '@n' to the end of the name.
         #############################################################################################
         my (%name_cnt);
         foreach my $pin_name ( values %pin_names ) {
@@ -1583,11 +1577,9 @@ Text '>GATE' R0 (5.715 -1.016);
         foreach my $pin_num ( keys %pin_names ) {
             if ( $name_cnt{ $pin_names{$pin_num} } > 0 ) {
 
-# Iterate through pins with the same name appending @1, @2, ... to the pin name.
+                # Iterate through pins with the same name appending @1, @2, ... to the pin name.
                 $name_cnt{ $pin_names{$pin_num} }--;
-                $pin_names{$pin_num} =
-                  $pin_names{$pin_num} . '@'
-                  . ( $name_cnt{ $pin_names{$pin_num} } + 1 );
+                $pin_names{$pin_num} .= '@' . ( $name_cnt{ $pin_names{$pin_num} } + 1 );
             }
         }
 
@@ -1596,7 +1588,6 @@ Text '>GATE' R0 (5.715 -1.016);
         #############################################################################################
         my (%is_knockout);
         if ( $is_dil or $is_qfp ) {
-            my (%is_knockout);
             foreach my $pin_num (@$knockouts) {
                 $is_knockout{$pin_num} = 1;
             }
@@ -1651,73 +1642,43 @@ Text '>GATE' R0 (5.715 -1.016);
 #        $eagle_script .= "Add PV_GATE 'PART_VALUE' Must 0 ($x $y);\n";
 
         #############################################################################################
-        # Create a gate for each pin of a QFP or DIL device.
+        # Create a gate for each pin of a DIL, QFP or BGA device.
         #############################################################################################
-        ( $x, $y ) = ( $origin_x, $origin_y );
-        for (
-            my $pin_num = 1 ;
-            $pin_num <= 2 * ( $num_pins_x + $num_pins_y ) ;
-            $pin_num++
-          )
-        {
-            if ( !defined $is_knockout{$pin_num} ) {
-                my $swap_level = $default_swap_level;
-                if ( defined $pin_swap_levels{$pin_num} ) {
-                    $swap_level = $pin_swap_levels{$pin_num};
-                }
-                my $pin_type = $default_pin_type;
-                if ( defined $pin_types{$pin_num} ) {
-                    $pin_type = $pin_types{$pin_num};
-                }
-                if ( defined $pin_names{$pin_num} ) {
-                    $eagle_script .=
-"Add $pin_gates{$pin_type} '$pin_names{$pin_num}' Always $swap_level ($x $y);\n";
-                }
-                else {
-                    $eagle_script .=
-"Add $pin_gates{$pin_type} '$default_pin_name\@$pin_num' Always $swap_level ($x $y);\n";
-                }
-            }
-            $y -= $gate_spacing_y * $dir_y;
-            if (   $pin_num == $num_pins_y
-                || $pin_num == ( $num_pins_y + $num_pins_x )
-                || $pin_num == ( 2 * $num_pins_y + $num_pins_x ) )
+        if ( $is_dil or $is_qfp) {
+            ( $x, $y ) = ( $origin_x, $origin_y );
+            for ( my $pin_num = 1 ; $pin_num <= $num_pins ; $pin_num++ )
             {
-                $x += $gate_spacing_x * $dir_x;
-                $y = $origin_y;
+                if ( !defined $is_knockout{$pin_num} ) {
+                    my $swap_level = $pin_swap_levels{$pin_num};
+                    my $pin_type = $pin_types{$pin_num};
+                    $eagle_script .= "Add $pin_gates{$pin_type} '$pin_names{$pin_num}' Always $swap_level ($x $y);\n";
+                }
+                $y -= $gate_spacing_y * $dir_y;
+                if (   $pin_num == $num_pins_y
+                    || $pin_num == ( $num_pins_y + $num_pins_x )
+                    || $pin_num == ( 2 * $num_pins_y + $num_pins_x ) )
+                {
+                    $x += $gate_spacing_x * $dir_x;
+                    $y = $origin_y;
+                }
             }
         }
-
-        #############################################################################################
-        # Create a gate for each pin of the BGA device.
-        #############################################################################################
-        $y = $origin_y;
-        for ( my $row = 0 ; $row < $num_rows ; $row++ ) {
-            $row_id = $bga_row_ids[$row];
-            $x      = $origin_x;
-            for ( my $col = 1 ; $col <= $num_cols ; $col++ ) {
-                my $pin_id = $row_id . $col;
-                if ( !defined $is_knockout{$pin_id} ) {
-                    my $swap_level = $default_swap_level;
-                    if ( defined $pin_swap_levels{$pin_id} ) {
-                        $swap_level = $pin_swap_levels{$pin_id};
+        else {
+            $y = $origin_y;
+            for ( my $row = 0 ; $row < $num_rows ; $row++ ) {
+                $row_id = $bga_row_ids[$row];
+                $x      = $origin_x;
+                for ( my $col = 1 ; $col <= $num_cols ; $col++ ) {
+                    my $pin_id = $row_id . $col;
+                    if ( !defined $is_knockout{$pin_id} ) {
+                        my $swap_level = $pin_swap_levels{$pin_id};
+                        my $pin_type = $pin_types{$pin_id};
+                        $eagle_script .= "Add $pin_gates{$pin_type} '$pin_names{$pin_id}' Always $swap_level ($x $y);\n";
                     }
-                    my $pin_type = $default_pin_type;
-                    if ( defined $pin_types{$pin_id} ) {
-                        $pin_type = $pin_types{$pin_id};
-                    }
-                    if ( defined $pin_names{$pin_id} ) {
-                        $eagle_script .=
-"Add $pin_gates{$pin_type} '$pin_names{$pin_id}' Always $swap_level ($x $y);\n";
-                    }
-                    else {
-                        $eagle_script .=
-"Add $pin_gates{$pin_type} '$default_pin_name\@$pin_id' Always $swap_level ($x $y);\n";
-                    }
+                    $x += $gate_spacing_x * $dir_x;
                 }
-                $x += $gate_spacing_x * $dir_x;
+                $y -= $gate_spacing_y * $dir_y;
             }
-            $y -= $gate_spacing_y * $dir_y;
         }
 
         #############################################################################################
@@ -1737,12 +1698,10 @@ Text '>GATE' R0 (5.715 -1.016);
                     $pin_type = $pin_types{$pin_num};
                 }
                 if ( defined $pin_names{$pin_num} ) {
-                    $eagle_script .=
-"Add $pin_gates{$pin_type} '$pin_names{$pin_num}' Always $swap_level ($x $y);\n";
+                    $eagle_script .= "Add $pin_gates{$pin_type} '$pin_names{$pin_num}' Always $swap_level ($x $y);\n";
                 }
                 else {
-                    $eagle_script .=
-"Add $pin_gates{$pin_type} '$default_pin_name\@$pin_num' Always $swap_level ($x $y);\n";
+                    $eagle_script .= "Add $pin_gates{$pin_type} '$default_pin_name\@$pin_num' Always $swap_level ($x $y);\n";
                 }
             }
             $y -= $gate_spacing_y * $dir_y;
@@ -1754,42 +1713,10 @@ Text '>GATE' R0 (5.715 -1.016);
         for (@$pckgs) {
             my %pckg = %$_;
             $eagle_script .= "
-		Package '$pckg{name}' '$pckg{variant}';
+        Package '$pckg{name}' '$pckg{variant}';
 		Technology  '';
 		";
 
-            if ( defined $pckg{num_pins} ) {
-
-                # DIL package
-                $num_pins_x = 0;
-                $num_pins_y = $pckg{num_pads} / 2;
-                $num_rows   = 0;
-                $num_cols   = 0;
-            }
-            elsif ( defined $pckg{num_pads_x} ) {
-
-                # QFP package
-                $num_pins_x = $pckg{num_pads_x};
-                $num_pins_y = $pckg{num_pads_y};
-                $num_rows   = 0;
-                $num_cols   = 0;
-            }
-            elsif ( defined $pckg{num_rows} ) {
-
-                # BGA package
-                $num_pins_x = 0;
-                $num_pins_y = 0;
-                $num_rows   = $pckg{num_rows};
-                $num_cols   = $pckg{num_cols};
-            }
-            else {
-
-                # unknown package (do nothing)
-                $num_pins_x = 0;
-                $num_pins_y = 0;
-                $num_rows   = 0;
-                $num_cols   = 0;
-            }
 			my $pin_name_prefix = $pckg{pin_name_prefix};
 
             # Connect a single gate to each pin of the QFP, DIL or BGA package.

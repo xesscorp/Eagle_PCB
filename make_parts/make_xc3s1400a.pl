@@ -1,7 +1,7 @@
 use make_eagle_lib;
 use gen_xil_pin_list;
 
-#print make_symbols();
+print make_symbols();
 
 print make_bga_pckg(
     name           => 'Xilinx-FT256',
@@ -14,21 +14,20 @@ print make_bga_pckg(
     num_cols       => 16,
     chip_x         => 17,
     chip_y         => 17,
-    add_fiducials  => 0,
 );
 
 ##############################################################################################
 ##############################################################################################
 
 %device = (
-    name  => 'XC3S1400A-FT256',
+    name  => 'XC3S1400A',
     title =>
       'Xilinx Spartan 3A 1400K-gate FPGA in FT256 package',
     desc  => '',
     pckgs => [
         {
             name       => 'Xilinx-FT256',
-            variant    => '',
+            variant    => '-FT256',
             num_rows   => 16,
             num_cols   => 16,
         },

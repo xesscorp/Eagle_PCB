@@ -1,6 +1,6 @@
 use make_eagle_lib;
 
-#print make_symbols();
+print make_symbols();
 
 print make_qfp_pckg(
     name           => 'AKM-VSOP28',
@@ -17,11 +17,8 @@ print make_qfp_pckg(
     num_pads_x     => 0,
     chip_x         => 7.6,
     chip_y         => 10,
-    add_fiducials  => 0,
 );
 
-##############################################################################################
-##############################################################################################
 
 %device = (
     name  => 'AK4565VF',

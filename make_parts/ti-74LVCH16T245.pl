@@ -1,7 +1,6 @@
 use make_eagle_lib;
-use gen_xil_pin_list;
 
-#print make_symbols();
+print make_symbols();
 
 print make_qfp_pckg(
 	name => 'TI-TSSOP48',
@@ -22,8 +21,7 @@ print make_qfp_pckg(
 
 %device = (
     name  => '74LVCH16T245',
-    title =>
-'16-Bit Dual-Supply Bus Transceiver with Configurable Voltage Translation and 3-State Outputs',
+    title => '16-Bit Dual-Supply Bus Transceiver with Configurable Voltage Translation and 3-State Outputs',
     desc  => '',
     pckgs => [
         {

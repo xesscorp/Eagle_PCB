@@ -1,7 +1,6 @@
 use make_eagle_lib;
-use gen_xil_pin_list;
 
-#print make_symbols();
+print make_symbols();
 
 print make_qfp_pckg(
     name           => 'TI-R-PDSO-G6-DBV',
@@ -56,8 +55,7 @@ print make_qfp_pckg(
 
 %device = (
     name  => 'SN74LVC1T45',
-    title =>
-'TI Single-Bit Dual-Supply Bus Transceiver with Configurable Voltage Translation and 3-State Outputs',
+    title => 'TI Single-Bit Dual-Supply Bus Transceiver with Configurable Voltage Translation and 3-State Outputs',
     desc  => '',
     pckgs => [
         {
