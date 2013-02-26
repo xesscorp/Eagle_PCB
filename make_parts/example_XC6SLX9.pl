@@ -3,7 +3,10 @@ use make_eagle_lib; # Import the Eagle part-making library.
 # Import subroutines for creating pin structures directly from Xilinx documentation. 
 use gen_xil_pin_list;
 
-print make_symbols(); # Instantiate the schematic pin symbols.
+# This instantiates the schematic pin symbols. If you already have these in your
+# Eagle library (and you will if you've previously imported a part made with this
+# perl script), then you can omit calling this function.
+print make_symbols();
 
 print make_bga_pckg(
     name           => 'Xilinx-FT256',

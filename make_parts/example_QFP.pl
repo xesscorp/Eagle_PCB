@@ -1,6 +1,9 @@
 use make_eagle_lib; # Import the Eagle part-making library.
 
-print make_symbols(); # Instantiate the schematic pin symbols.
+# This instantiates the schematic pin symbols. If you already have these in your
+# Eagle library (and you will if you've previously imported a part made with this
+# perl script), then you can omit calling this function.
+print make_symbols();
 
 # Create a QFG package footprint.
 print make_qfp_pckg(
