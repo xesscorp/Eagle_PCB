@@ -770,18 +770,50 @@ string GetDigikeyPrice(string PartNumber, int Quantity)
     string Html;
     if(PartNumber == "")
         return "";
-    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?Detail&name="+PartNumber,40) >= 0)
-//    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&site=us&keywords="+PartNumber,40) >= 0)
+//    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?Detail&name="+PartNumber,40) >= 0)
+    if(netget(Html,"http://www.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&keywords="+PartNumber,40) >= 0)
     {
 //        output("HTML.htm","at") { printf("%s\n\n//////\n\n",Html); }
 //        return "0.0";
         int StartPos = strstr(Html,"Extended Price");
         if(StartPos < 0)
-            return "A???";
+        {
+            // OK, didn't find extended prices, so maybe this is a list of parts with a similar part number.
+            // Look for the href that points to the page describing the exact part number.
+            int pos = strstr(Html, ">" + PartNumber + "<"); // This is the part number in the link text portion of the href.
+            if(pos < 0)
+            {
+                // No idea what we have here, so abort.
+                return "A???";
+            }
+            Html = strsub(Html, 0, pos); // Keep everything up to the link text.
+            pos = strrstr(Html, "href=\""); // Look for the part's page link.
+            if(pos < 0)
+            {
+                return "B???";
+            }
+            Html = strsub(Html, pos + strlen("href=\"")); // Remove everything preceding the page link.
+            pos = strstr(Html, "\""); // Look for the " ending the page link.
+            if(pos < 0)
+            {
+                return "C???";
+            }
+            string link = "http://www.digikey.com" + strsub(Html, 0, pos);
+//            output("LINK.txt","at") { printf("%s\n",link); }
+            if(netget(Html,link) < 0)
+            {
+                return "D???";
+            }
+            StartPos = strstr(Html,"Extended Price");
+            if(StartPos < 0)
+            {
+                return "E???";
+            }
+        }
         Html = strsub(Html, StartPos+strlen("Extended Price"));
         int EndPos = strstr(Html,"</table>");
         if(EndPos < 0)
-            return "B???";
+            return "F???";
         Html = strsub(Html,0,EndPos);
         string Line[];
         int NumLines = strsplit(Line,Html,'\n');
@@ -817,7 +849,7 @@ string GetDigikeyPrice(string PartNumber, int Quantity)
         }
         return Price;
     }
-    return "C???";
+    return "G???";
 }
 
 void GetPartPrices(void)
@@ -836,10 +868,13 @@ void GetPartPrices(void)
         int Quantity = (n2 - n1) * BuildQty;
         PartDigikeyPrice[i1] = GetDigikeyPrice(PartDigikeyNumber[i1],Quantity);
         TotalDigikeyPrice += strtod(PartDigikeyPrice[i1]) * Quantity;
+//        PartMouserPrice[i1] = GetMouserPrice(PartMouserNumber[i1],Quantity);
+//        TotalMouserPrice += strtod(PartMouserPrice[i1]) * Quantity;
         n1 = n2;
         i1 = Index[n2-1];
     }
     UnitDigikeyPrice = TotalDigikeyPrice / BuildQty;
+//    UnitMouserPrice = TotalMouserPrice / BuildQty;
     GenerateManfDistiList();
 }
 
