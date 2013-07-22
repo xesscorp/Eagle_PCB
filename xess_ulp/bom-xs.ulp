@@ -743,113 +743,97 @@ void SaveList(void)
 
 //===================================================================================================
 
-real Number[];
-
-int ExtractNumbers(string Line)
+string ExtractDigikeyQtyPricing(string HtmlLine, int NeededQty)
 {
-    int NumNumbers = 0;
+    real Number[]; // Store quantity pricing info in this array.
     string NumberText = "";
-    for(int i=0; i<strlen(Line); i++)
+    int n = 0;
+    for(int i=0; i<strlen(HtmlLine); i++)
     {
-        if(isdigit(Line[i]) || (Line[i]=='.') || (Line[i]==','))
+        if(isdigit(HtmlLine[i]) || (HtmlLine[i]=='.') || (HtmlLine[i]==',')) // Look for digits, decimal points, commas.
         {
-            if(Line[i] != ',')
-            NumberText += Line[i];
+            if(HtmlLine[i] != ',') // Keep everything but the commas in a number.
+                NumberText += HtmlLine[i];
         }
-        else if(strlen(NumberText)!=0)
+        else if(strlen(NumberText)!=0) // Found a non-numeric character terminating a number.
         {
-            Number[NumNumbers++] = strtod(NumberText);
-            NumberText = "";
+            Number[n++] = strtod(NumberText); // Convert the number string that was found.
+            NumberText = ""; // Clear number string for continued scanning.
         }
     }
-    return NumNumbers;
+
+    string UnitPrice;
+    switch(n)
+    {
+        case 2: // quantity + extended price format.
+            sprintf(UnitPrice, "%11.2f", Number[1]/Number[0]);
+            if(NeededQty < Number[0])
+                UnitPrice = "";
+            break;
+        case 3: // quantity + unit price + extended price format.
+            sprintf(UnitPrice, "%11.2f", Number[1]);
+            if(NeededQty < Number[0])
+                UnitPrice = "";
+            break;
+        default: // unknown format.
+            UnitPrice = "";
+            break;
+    }
+    return UnitPrice;
 }
 
-string GetDigikeyPrice(string PartNumber, int Quantity)
+string GetDigikeyPartUrl(string Html, string PartNumber)
 {
-    string Html;
+    // Look for the href that points to the page describing the exact part number.
+    int pos = strstr(Html, ">" + PartNumber + "<"); // This is the part number in the link text portion of the href.
+    if(pos < 0)
+        return ""; // No idea what we have here, so abort.
+    Html = strsub(Html, 0, pos); // Keep everything up to the page link text.
+    
+    pos = strrstr(Html, "href=\""); // Look for the part's page link.
+    if(pos < 0)
+        return ""; // No link, so abort.
+    Html = strsub(Html, pos + strlen("href=\"")); // Remove everything preceding the page link.
+    
+    pos = strstr(Html, "\""); // Look for the quotation mark ending the page link.
+    if(pos < 0)
+        return ""; // No quotation, so abort.
+        
+    return "http://www.digikey.com" + strsub(Html, 0, pos); // Return the part page link.
+}
+
+string GetDigikeyPartPrice(string PartNumber, int Quantity)
+{
     if(PartNumber == "")
         return "";
-//    if(netget(Html,"http://search.digikey.com/scripts/DkSearch/dksus.dll?Detail&name="+PartNumber,40) >= 0)
-    if(netget(Html,"http://www.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&keywords="+PartNumber,40) >= 0)
+    
+    string Url = "http://www.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&keywords="+PartNumber;
+    string Html;    
+    while(netget(Html, Url, 40) >= 0) // Get the HTML page from the URL address.
     {
-//        output("HTML.htm","at") { printf("%s\n\n//////\n\n",Html); }
-//        return "0.0";
-        int StartPos = strstr(Html,"Extended Price");
-        if(StartPos < 0)
+        int StartPos = strstr(Html,"Extended Price"); // Look for the pricing information.
+        if(StartPos >= 0)
         {
-            // OK, didn't find extended prices, so maybe this is a list of parts with a similar part number.
-            // Look for the href that points to the page describing the exact part number.
-            int pos = strstr(Html, ">" + PartNumber + "<"); // This is the part number in the link text portion of the href.
-            if(pos < 0)
+            Html = strsub(Html, StartPos+strlen("Extended Price"));
+            int EndPos = strstr(Html,"</table>");
+            if(EndPos < 0)
+                return "***Bad HTML***";
+            Html = strsub(Html,0,EndPos);
+            string Line[];
+            int NumLines = strsplit(Line,Html,'\n');
+            string UnitPrice = "***Obsolete***";
+            for(int i=0; i<NumLines; i++)
             {
-                // No idea what we have here, so abort.
-                return "A???";
+                string p = ExtractDigikeyQtyPricing(Line[i], Quantity);
+                if(p != "")
+                    UnitPrice = p;
             }
-            Html = strsub(Html, 0, pos); // Keep everything up to the link text.
-            pos = strrstr(Html, "href=\""); // Look for the part's page link.
-            if(pos < 0)
-            {
-                return "B???";
-            }
-            Html = strsub(Html, pos + strlen("href=\"")); // Remove everything preceding the page link.
-            pos = strstr(Html, "\""); // Look for the " ending the page link.
-            if(pos < 0)
-            {
-                return "C???";
-            }
-            string link = "http://www.digikey.com" + strsub(Html, 0, pos);
-//            output("LINK.txt","at") { printf("%s\n",link); }
-            if(netget(Html,link) < 0)
-            {
-                return "D???";
-            }
-            StartPos = strstr(Html,"Extended Price");
-            if(StartPos < 0)
-            {
-                return "E???";
-            }
+            return UnitPrice;    
         }
-        Html = strsub(Html, StartPos+strlen("Extended Price"));
-        int EndPos = strstr(Html,"</table>");
-        if(EndPos < 0)
-            return "F???";
-        Html = strsub(Html,0,EndPos);
-        string Line[];
-        int NumLines = strsplit(Line,Html,'\n');
-        string Price = "";
-        for(int i=0; i<NumLines; i++)
-        {
-            int NumNumbers = ExtractNumbers(Line[i]);
-            switch(NumNumbers)
-            {
-            case 2:
-                if(Quantity >= Number[0])
-                sprintf(Price,"%11.2f",Number[1]/Number[0]);
-                else
-                {
-                    if (Price == "")
-                    sprintf(Price,"%11.2f",Number[1]/Number[0]);
-                    return Price;
-                }
-                break;
-            case 3:
-                if(Quantity >= Number[0])
-                sprintf(Price,"%11.2f",Number[1]);
-                else
-                {
-                    if (Price == "")
-                    sprintf(Price,"%11.2f",Number[1]);
-                    return Price;
-                }
-                break;
-            default:
-                break;
-            }
-        }
-        return Price;
+        else // No pricing info, so might be a list of possible parts. Look for a link to the part page.
+            Url = GetDigikeyPartUrl(Html, PartNumber);
     }
-    return "G???";
+    return "***Unknown***";
 }
 
 void GetPartPrices(void)
@@ -866,9 +850,9 @@ void GetPartPrices(void)
             continue;
         }
         int Quantity = (n2 - n1) * BuildQty;
-        PartDigikeyPrice[i1] = GetDigikeyPrice(PartDigikeyNumber[i1],Quantity);
+        PartDigikeyPrice[i1] = GetDigikeyPartPrice(PartDigikeyNumber[i1], Quantity);
         TotalDigikeyPrice += strtod(PartDigikeyPrice[i1]) * Quantity;
-//        PartMouserPrice[i1] = GetMouserPrice(PartMouserNumber[i1],Quantity);
+//        PartMouserPrice[i1] = GetMouserPartPrice(PartMouserNumber[i1],Quantity);
 //        TotalMouserPrice += strtod(PartMouserPrice[i1]) * Quantity;
         n1 = n2;
         i1 = Index[n2-1];
