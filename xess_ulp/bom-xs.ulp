@@ -1,4 +1,4 @@
-string Version = "2.00";
+string Version = "3.00";
 
 #usage " \
 <b>Export a Bill Of Materials / Real-Time Pricing / Online Ordering</b> \
@@ -13,6 +13,10 @@ Digi-Key website</b> for a quick estimate of circuit cost. \
 Modified by: Dave Vandenbout / XESS Corp. - devb@xess.com</author> \
 <p> \
 Version: 2.00 \
+Modified by: Jorge Ortiz / Jicamarca Radio Observatory. - jorge.ortiz@jro.igp.gob.pe</author> \
+<p> \
+Version: 3.00 \
+Log: Added support for multi-value parts for Digikey\
 "
 
 
@@ -122,6 +126,11 @@ or online ordering features:  \
 <b>DIGIKEY#:</b> This attribute holds the Digi-Key part number.  \
 </li>  \
 <li>  \
+<b>DIGIKEY#S:</b> This attribute holds multiple Digi-Key part numbers for different values of the same device. Works best by adding the attributes for a specific package directly to a library like rcl or a custom one. The format is <pre>Value1:Manf1#:Digikey1#|Value2:Manf2#:Digikey2#[:Manf2]|...</pre>\
+When using this option, you must fill in DIGIKEY# and MANF# with the value 'USE_DIGIKEY#S' (no single quotes)\
+You can add an optional parameter of manufacturer name ([:Manf2] in the example, should not have [] when actually used) to override the 'MANF' field for that specific value. \
+</li>  \
+<li>  \
 <b>MOUSER#:</b> This attribute holds the Mouser part number.  \
 </li>  \
 </ul> \
@@ -132,9 +141,8 @@ To assist with this chore, use the <b>attrib-copy</b> ULP to copy the attributes
 across all identical parts.  \
 <p> \
 To save effort, you can also add these attributes directly to the parts in the library.  \
-But this won't work if it's a generic part like a resistor whose resistance value will affect it's part number.  \
-It also won't work for ICs that have multiple package options (for example, SOIC and TSSOP)  \
-since those also affect the part number.  \
+This will still work if it's a generic part like a resistor whose resistance value will affect it's part number, or \
+for ICs that have multiple package options (for example, SOIC and TSSOP). You will need to use the DIGIKEY#S attribute. \
 <p> \
 The good news is you don't need to enter all these attributes for every part to use the ordering/pricing features.  \
 For example, parts without a Mouser part number simply aren't included in a Mouser order list.  \
@@ -214,6 +222,8 @@ you want to save it before leaving the program or loading a new database. \
 Original Author: <a href=\"mailto:support@cadsoft.de?subject=bom-xs ULP\">support@cadsoft.de</a> \
 <p> \
 Modified by: Dave Vandenbout / XESS Corp. - <a href=\"mailto:devb@xess.com?subject=bom-xs ULP\">devb@xess.com</a> \
+<p> \
+Modified by: Jorge Ortiz / Jicamarca Radio Observatory. - <a href=\"mailto:jorge.ortiz@jro.igp.gob.pe?subject=bom-xs ULP\">jorge.ortiz@jro.igp.gob.pe</a> \
 ";
 
 if (!schematic) {
@@ -235,13 +245,14 @@ int NumParts;
 numeric string Lines[];
 numeric string PartName[], PartValue[], PartPrefix[], PartDevice[], PartPackage[], PartHeadline[], PartDescription[], 
 PartManf[], PartManfNumber[], PartMouserNumber[], PartDigikeyNumber[], PartMouserPrice[], PartDigikeyPrice[];
+numeric string PartDigikeyNumbers[]; /* Added for multi-value part define */
 int PartValueOn[];
 int Selected;
 
 real TotalDigikeyPrice = -1.0;
 real UnitDigikeyPrice = -1.0;
 
-enum { ltParts, ltValues, ltManf, ltManfDisti, ltDigikey, ltMouser, ltLabels, ltSeeed }; // List Types
+enum { ltParts, ltValues, ltManf, ltManfDisti, ltDigikey, ltMouser, ltLabels }; // List Types
 enum { ofText, ofHTML, ofCSV }; // Output Formats
 int ListType = 0;
 int OutputFormat = 0;
@@ -284,6 +295,7 @@ void CollectPartData(void)
                 PartManfNumber[NumParts] = P.attribute["MANF#"];
                 PartMouserNumber[NumParts] = P.attribute["MOUSER#"];
                 PartDigikeyNumber[NumParts] = P.attribute["DIGIKEY#"];
+                PartDigikeyNumbers[NumParts] = P.attribute["DIGIKEY#S"]; /* Added for multi-value part define */
                 NumParts++;
             }
         }
@@ -320,60 +332,74 @@ string DatabaseLookup(string key, int f)
     return lookup(Database, key, DatabaseFields[f], DatabaseSeparator);
 }
 
+/* Added for multi-value part support */
+string GetDigiKeyEntryByValue(string PartNumbersEntries, string Value, string PartManf) {
+	string part_number_array[];
+	int number_of_parts = strsplit(part_number_array, PartNumbersEntries, '|');
+	
+	string PartNumberListEntry_Sections[];
+	string iPartValue, iPartManfNumber, iPartNumber;
+	for (int i=0; i<number_of_parts; i++) {
+		int part_entry_total_sections = strsplit(PartNumberListEntry_Sections, part_number_array[i], ':');
+		iPartValue      = PartNumberListEntry_Sections[0]; // Case sensitive for value cases like 10m vs 10M
+		iPartManfNumber = PartNumberListEntry_Sections[1];
+		iPartNumber     = PartNumberListEntry_Sections[2];
+		if (iPartValue == Value) {
+			if ((part_entry_total_sections > 3) && (PartNumberListEntry_Sections[3])) { // Might not be set
+				PartManf = PartNumberListEntry_Sections[3];
+			}
+			return iPartManfNumber+":"+iPartNumber+":"+PartManf;
+		}
+	}
+	return "";
+}
+
+/* Added for multi-value part support */
+string GetDigikeyInfo(string PartManf, string PartManfNumber, string PartNumber, string PartValue, string PartNumbersEntries) {
+	// PartNumbersEntries format:
+	// Value1:ManufacturerPartNumber1:DigikeyPartNumber1|Value2:ManufacturerPartNumber2:DigikeyPartNumber2|...
+	// Return Format
+	// ManufacturerPartNumber:DigikeyPartNumber:Manufacturer
+	if (PartNumber == "USE_DIGIKEY#S") {
+		string DigiKeyEntry = GetDigiKeyEntryByValue(PartNumbersEntries, PartValue, PartManf);
+		string dikigey_entry_array[];
+		int number_of_parts = strsplit(dikigey_entry_array, DigiKeyEntry, ':');
+		PartManfNumber   = dikigey_entry_array[0];
+		PartNumber       = dikigey_entry_array[1];
+		PartManf         = dikigey_entry_array[2];
+	}
+	return PartManfNumber+":"+PartNumber+":"+PartManf;
+}
+
+
 void GeneratePartList(void)
 {
     int NumLines = 0;
+	string CurrentDigikeyinfo, CurrentPartManf, CurrentPartManfNumber, CurrentDigikeyPartNumber;
+	string dikigey_entry_array[];
 
     //XXX column sequence?
     Lines[NumLines++] = "Part\tValue\tDevice\tPackage\tManufacturer\tPart#\tDescription" + DatabaseHeader();
     for (int i = 0; i < NumParts; i++) {
-        Lines[NumLines] = PartName[i] + "\t" + PartValue[i] + "\t" + PartDevice[i] + "\t" + PartPackage[i] + "\t" + PartManf[i] + "\t" + PartManfNumber[i] + "\t" + PartHeadline[i];
+	
+		CurrentPartManfNumber    = PartManfNumber[i];
+		CurrentPartManf          = PartManf[i];
+		CurrentDigikeyPartNumber = PartDigikeyNumber[i];
+		if (PartManfNumber[i] == "USE_DIGIKEY#S") {
+			CurrentDigikeyinfo = GetDigikeyInfo(PartManf[i], PartManfNumber[i], PartDigikeyNumber[i], PartValue[i], PartDigikeyNumbers[i]);
+			int number_of_parts = strsplit(dikigey_entry_array, CurrentDigikeyinfo, ':');
+			CurrentPartManfNumber    = dikigey_entry_array[0];
+			CurrentDigikeyPartNumber = dikigey_entry_array[1];
+			CurrentPartManf          = dikigey_entry_array[2];
+		}
+
+        Lines[NumLines] = PartName[i] + "\t" + PartValue[i] + "\t" + PartDevice[i] + "\t" + PartPackage[i] + "\t" + CurrentPartManf + "\t" + CurrentPartManfNumber + "\t" + PartHeadline[i];
         if (Database[0]) {
             string key = DatabaseKey(i);
             for (int f = 0; DatabaseFields[f]; f++)
             Lines[NumLines] += "\t" + DatabaseLookup(key, f);
             Lines[NumLines] += "\t" + key; // hidden field!
         }
-        NumLines++;
-    }
-    Lines[NumLines] = "";
-}
-
-void GenerateSeeedList(void)
-{
-    int NumLines = 0;
-
-    //XXX column sequence?
-    Lines[NumLines++] = "#\tRef. Des.\tQty\tCatalog\tDesc.\tValue\tPackage\tManufacturer\tManf. Part#\tDistributor\tDist. Part#\t$unit\tPrice Break" + DatabaseHeader();
-    string Quantity, ItemNum, DistName, DistPartNumber;
-    sprintf(Quantity, "%d", BuildQty);
-    for (int i = 0; i < NumParts; i++) {
-        sprintf(ItemNum,"%d",i+1);
-        if (PartDigikeyNumber[i] != "") {
-            DistName = "Digi-Key";
-            DistPartNumber = PartDigikeyNumber[i];
-        }
-        else if (PartMouserNumber[i] != "") {
-            DistName = "Mouser";
-            DistPartNumber = PartMouserNumber[i];
-        }
-        else {
-            DistName = "";
-            DistPartNumber = "";
-        }
-        Lines[NumLines] = ItemNum + "\t" + 
-                          PartName[i] + "\t" + 
-                          "1" + "\t" + 
-                          "" + "\t" +
-                          PartDevice[i] + "\t" +
-                          PartValue[i] + "\t" +
-                          PartPackage[i] + "\t" +
-                          PartManf[i] + "\t" +
-                          PartManfNumber[i] + "\t" +
-                          DistName + "\t" + 
-                          DistPartNumber + "\t" +
-                          "0.00" + "\t" +
-                          Quantity;
         NumLines++;
     }
     Lines[NumLines] = "";
@@ -422,10 +448,12 @@ void GenerateManfList(void)
 {
     int NumLines = 0;
     int Index[];
+	string CurrentDigikeyinfo, CurrentPartManf, CurrentPartManfNumber, CurrentDigikeyPartNumber;
+	string dikigey_entry_array[];
 
     //XXX column sequence?
     Lines[NumLines++] = "Qty\tManf#\tManf\tDevice\tValue\tDescription" + DatabaseHeader();
-    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartManf, PartManfNumber, PartHeadline);
+    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartManf, PartManfNumber, PartHeadline, PartDigikeyNumber, PartDigikeyNumbers);
     for (int n1 = 0, n2 = 0; ++n2 <= NumParts; ) {
         int i1 = Index[n1];
         if (n2 < NumParts) {
@@ -434,11 +462,24 @@ void GenerateManfList(void)
             if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
             continue;
         }
+
+		CurrentPartManfNumber    = PartManfNumber[i1];
+		CurrentPartManf          = PartManf[i1];
+		CurrentDigikeyPartNumber = PartDigikeyNumber[i1];
+
+		if (PartManfNumber[i1] == "USE_DIGIKEY#S") {
+			CurrentDigikeyinfo = GetDigikeyInfo(PartManf[i1], PartManfNumber[i1], PartDigikeyNumber[i1], PartValue[i1], PartDigikeyNumbers[i1]);
+			int number_of_parts = strsplit(dikigey_entry_array, CurrentDigikeyinfo, ':');
+			CurrentPartManfNumber    = dikigey_entry_array[0];
+			CurrentDigikeyPartNumber = dikigey_entry_array[1];
+			CurrentPartManf          = dikigey_entry_array[2];
+		}
+		
         string Quantity;
         sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
         Lines[NumLines] = Quantity 
-        + "\t" + PartManfNumber[i1] 
-        + "\t" + PartManf[i1]
+        + "\t" + CurrentPartManfNumber
+        + "\t" + CurrentPartManf
         + "\t" + PartDevice[i1]
         + "\t" + PartValue[i1]
         + "\t" + PartHeadline[i1]; 
@@ -455,6 +496,8 @@ void GenerateManfDistiList(void)
     int Index[];
     string TotalDigikeyPriceStr;
     string UnitDigikeyPriceStr;
+	string CurrentDigikeyinfo, CurrentPartManf, CurrentPartManfNumber, CurrentDigikeyPartNumber;
+	string dikigey_entry_array[];
 
     //XXX column sequence?
     Lines[NumLines++] = "Qty\tDigikey#\tDigikey $\tMouser#\tMouser $\tManf#\tManf\tDevice\tValue\tDescription" + DatabaseHeader();
@@ -467,15 +510,28 @@ void GenerateManfDistiList(void)
             if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
             continue;
         }
+		
+		CurrentPartManfNumber    = PartManfNumber[i1];
+		CurrentPartManf          = PartManf[i1];
+		CurrentDigikeyPartNumber = PartDigikeyNumber[i1];
+		if (PartManfNumber[i1] == "USE_DIGIKEY#S") {
+			// Get actual Digikey parts here from PartDigikeyNumbers
+			CurrentDigikeyinfo = GetDigikeyInfo(PartManf[i1], PartManfNumber[i1], PartDigikeyNumber[i1], PartValue[i1], PartDigikeyNumbers[i1]);
+			int number_of_parts = strsplit(dikigey_entry_array, CurrentDigikeyinfo, ':');
+			CurrentPartManfNumber    = dikigey_entry_array[0];
+			CurrentDigikeyPartNumber = dikigey_entry_array[1];
+			CurrentPartManf          = dikigey_entry_array[2];
+		}
+		
         string Quantity;
         sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
         Lines[NumLines] = Quantity 
-        + "\t" + PartDigikeyNumber[i1]
+        + "\t" + CurrentDigikeyPartNumber
         + "\t" + PartDigikeyPrice[i1]
         + "\t" + PartMouserNumber[i1]                                                 
         + "\t" + PartMouserPrice[i1]                                                 
-        + "\t" + PartManfNumber[i1] 
-        + "\t" + PartManf[i1]
+        + "\t" + CurrentPartManfNumber
+        + "\t" + CurrentPartManf
         + "\t" + PartDevice[i1]
         + "\t" + PartValue[i1]
         + "\t" + PartHeadline[i1];
@@ -525,10 +581,12 @@ void GenerateDigikeyOrderList(void)
 {
     int NumLines = 0;
     int Index[];
+	string CurrentDigikeyinfo, CurrentPartManf, CurrentPartManfNumber, CurrentDigikeyPartNumber;
+	string dikigey_entry_array[];
 
     //XXX column sequence?
     Lines[NumLines++] = "Digikey Order List";
-    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartDigikeyNumber);
+    sort(NumParts, Index, PartPrefix, PartValue, PartDevice, PartDigikeyNumber, PartDigikeyNumbers);
     for (int n1 = 0, n2 = 0; ++n2 <= NumParts; )
     {
         int i1 = Index[n1];
@@ -537,13 +595,26 @@ void GenerateDigikeyOrderList(void)
             int i2 = Index[n2];
             //XXX value on/off?
             if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
-            continue;
+				continue;
         }
-        if(PartDigikeyNumber[i1])
+		
+		CurrentPartManfNumber    = PartManfNumber[i1];
+		CurrentPartManf          = PartManf[i1];
+		CurrentDigikeyPartNumber = PartDigikeyNumber[i1];
+
+		if (PartManfNumber[i1] == "USE_DIGIKEY#S") { // Get actual Digikey parts here from PartDigikeyNumbers
+			CurrentDigikeyinfo = GetDigikeyInfo(PartManf[i1], PartManfNumber[i1], PartDigikeyNumber[i1], PartValue[i1], PartDigikeyNumbers[i1]);
+			int number_of_parts = strsplit(dikigey_entry_array, CurrentDigikeyinfo, ':');
+			CurrentPartManfNumber    = dikigey_entry_array[0];
+			CurrentDigikeyPartNumber = dikigey_entry_array[1];
+			CurrentPartManf          = dikigey_entry_array[2];
+		}
+		
+        if(CurrentDigikeyPartNumber)
         {
             string Quantity;
             sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
-            Lines[NumLines] = Quantity + "," + PartDigikeyNumber[i1];
+            Lines[NumLines] = Quantity + "," + CurrentDigikeyPartNumber;
             NumLines++;
         }
         n1 = n2;
@@ -557,9 +628,11 @@ void GenerateLabels(void)
     numeric string TempLines[];
     int NumLines = 0;
     int Index[];
+	string CurrentDigikeyinfo, CurrentPartManf, CurrentPartManfNumber, CurrentDigikeyPartNumber;
+	string dikigey_entry_array[];
 
     //XXX column sequence?
-    sort(NumParts, Index, PartPrefix, PartValue, PartName, PartDevice);
+    sort(NumParts, Index, PartPrefix, PartValue, PartName, PartDevice, PartDigikeyNumber, PartDigikeyNumbers);
     for (int n1 = 0, n2 = 0; ++n2 <= NumParts; ) 
     {
         int i1 = Index[n1];
@@ -570,7 +643,19 @@ void GenerateLabels(void)
             if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])
             continue;
         }
-        if(PartManfNumber[i1])
+		CurrentPartManfNumber    = PartManfNumber[i1];
+		CurrentPartManf          = PartManf[i1];
+		CurrentDigikeyPartNumber = PartDigikeyNumber[i1];
+		if (PartManfNumber[i1] == "USE_DIGIKEY#S") { // Get actual Digikey parts here from PartDigikeyNumbers
+			CurrentDigikeyinfo = GetDigikeyInfo(PartManf [i1], PartManfNumber[i1], PartDigikeyNumber[i1], PartValue[i1], PartDigikeyNumbers[i1]);
+			int number_of_parts = strsplit(dikigey_entry_array, CurrentDigikeyinfo, ':');
+			CurrentPartManfNumber    = dikigey_entry_array[0];
+			CurrentDigikeyPartNumber = dikigey_entry_array[1];
+			CurrentPartManf          = dikigey_entry_array[2];
+		}
+
+		
+        if(CurrentPartManfNumber)
         {
             string Quantity;
             sprintf(Quantity, "%d", (n2 - n1) * BuildQty);
@@ -590,7 +675,7 @@ void GenerateLabels(void)
                 else
                 break;
             }
-            TempLines[NumLines] += " \\\\" + PartManfNumber[i1] + " \\\\" + Desc + " \\\\Qty: " + Quantity + " \\\\Pckg: 0 \\\\XESS Corp. " + date + " |" ;
+            TempLines[NumLines] += " \\\\" + CurrentPartManfNumber + " \\\\" + Desc + " \\\\Qty: " + Quantity + " \\\\Pckg: 0 \\\\XESS Corp. " + date + " |" ;
             NumLines++;
         }
         n1 = n2;
@@ -615,7 +700,6 @@ void GenerateList(void)
     case ltManf:      GenerateManfList();         break;
     case ltManfDisti: GenerateManfDistiList();    break;
     case ltMouser:    GenerateMouserOrderList();  break;
-    case ltSeeed:     GenerateSeeedList();        break;
     case ltDigikey:   GenerateDigikeyOrderList(); break;
     case ltLabels:    GenerateLabels();           break;
     }
@@ -743,98 +827,88 @@ void SaveList(void)
 
 //===================================================================================================
 
-string ExtractDigikeyQtyPricing(string HtmlLine, int NeededQty)
+real Number[];
+
+int ExtractNumbers(string Line)
 {
-    real Number[]; // Store quantity pricing info in this array.
+    int NumNumbers = 0;
     string NumberText = "";
-    int n = 0;
-    for(int i=0; i<strlen(HtmlLine); i++)
+    for(int i=0; i<strlen(Line); i++)
     {
-        if(isdigit(HtmlLine[i]) || (HtmlLine[i]=='.') || (HtmlLine[i]==',')) // Look for digits, decimal points, commas.
+        if(isdigit(Line[i]) || (Line[i]=='.') || (Line[i]==','))
         {
-            if(HtmlLine[i] != ',') // Keep everything but the commas in a number.
-                NumberText += HtmlLine[i];
+            if(Line[i] != ',')
+            NumberText += Line[i];
         }
-        else if(strlen(NumberText)!=0) // Found a non-numeric character terminating a number.
+        else if(strlen(NumberText)!=0)
         {
-            Number[n++] = strtod(NumberText); // Convert the number string that was found.
-            NumberText = ""; // Clear number string for continued scanning.
+            Number[NumNumbers++] = strtod(NumberText);
+            NumberText = "";
         }
     }
-
-    string UnitPrice;
-    switch(n)
-    {
-        case 2: // quantity + extended price format.
-            sprintf(UnitPrice, "%11.2f", Number[1]/Number[0]);
-            if(NeededQty < Number[0])
-                UnitPrice = "";
-            break;
-        case 3: // quantity + unit price + extended price format.
-            sprintf(UnitPrice, "%11.2f", Number[1]);
-            if(NeededQty < Number[0])
-                UnitPrice = "";
-            break;
-        default: // unknown format.
-            UnitPrice = "";
-            break;
-    }
-    return UnitPrice;
+    return NumNumbers;
 }
 
-string GetDigikeyPartUrl(string Html, string PartNumber)
-{
-    // Look for the href that points to the page describing the exact part number.
-    int pos = strstr(Html, ">" + PartNumber + "<"); // This is the part number in the link text portion of the href.
-    if(pos < 0)
-        return ""; // No idea what we have here, so abort.
-    Html = strsub(Html, 0, pos); // Keep everything up to the page link text.
-    
-    pos = strrstr(Html, "href=\""); // Look for the part's page link.
-    if(pos < 0)
-        return ""; // No link, so abort.
-    Html = strsub(Html, pos + strlen("href=\"")); // Remove everything preceding the page link.
-    
-    pos = strstr(Html, "\""); // Look for the quotation mark ending the page link.
-    if(pos < 0)
-        return ""; // No quotation, so abort.
-        
-    return "http://www.digikey.com" + strsub(Html, 0, pos); // Return the part page link.
-}
+string GetDigikeyPrice(string PartNumber, string PartNumbers, string PartManf, string PartManfNumber, string PartValue, int Quantity) {
+    string Html;
+    if ((PartNumber == "") && (PartNumbers == ""))
+		return "";
+	
+	string Other;
+	// Get part number, either from field or by parsing PartNumbers
+	string digikey_info = GetDigikeyInfo(PartManf, PartManfNumber, PartNumber, PartValue, PartNumbers);
+	string dikigey_entry_array[];
+	int number_of_parts = strsplit(dikigey_entry_array, digikey_info, ':');
+	PartManfNumber = dikigey_entry_array[0];
+	PartNumber     = dikigey_entry_array[1];
 
-string GetDigikeyPartPrice(string PartNumber, int Quantity)
-{
-    if(PartNumber == "")
-        return "";
-    
-    //string Url = "http://www.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&keywords="+PartNumber;
-    string Url = "http://www.digikey.com/product-search/en?WT.z_header=search_go&lang=en&keywords="+PartNumber;
-    string Html;    
-    while(netget(Html, Url, 40) >= 0) // Get the HTML page from the URL address.
+	string part_url;
+	sprintf(part_url, "http://www.digikey.com/product-detail/en/%s/%s",PartManfNumber,PartNumber);
+    if(netget(Html,part_url,40) >= 0)
     {
-        int StartPos = strstr(Html,"Extended Price"); // Look for the pricing information.
-        if(StartPos >= 0)
+        int StartPos = strstr(Html,"Extended Price");
+        if(StartPos < 0)
+        return "A???";
+        Html = strsub(Html, StartPos+strlen("Extended Price"));
+        int EndPos = strstr(Html,"</table>");
+        if(EndPos < 0)
+        return "B???";
+        Html = strsub(Html,0,EndPos);
+        string Line[];
+        int NumLines = strsplit(Line,Html,'\n');
+        string Price = "";
+        for(int i=0; i<NumLines; i++)
         {
-            Html = strsub(Html, StartPos+strlen("Extended Price"));
-            int EndPos = strstr(Html,"</table>");
-            if(EndPos < 0)
-                return "***Bad HTML***";
-            Html = strsub(Html,0,EndPos);
-            string Line[];
-            int NumLines = strsplit(Line,Html,'\n');
-            string UnitPrice = "***Obsolete***";
-            for(int i=0; i<NumLines; i++)
+            int NumNumbers = ExtractNumbers(Line[i]);
+            switch(NumNumbers)
             {
-                string p = ExtractDigikeyQtyPricing(Line[i], Quantity);
-                if(p != "")
-                    UnitPrice = p;
+            case 2:
+                if(Quantity >= Number[0])
+                sprintf(Price,"%11.2f",Number[1]/Number[0]);
+                else
+                {
+                    if (Price == "")
+                    sprintf(Price,"%11.2f",Number[1]/Number[0]);
+                    return Price;
+                }
+                break;
+            case 3:
+                if(Quantity >= Number[0])
+                sprintf(Price,"%11.2f",Number[1]);
+                else
+                {
+                    if (Price == "")
+                    sprintf(Price,"%11.2f",Number[1]);
+                    return Price;
+                }
+                break;
+            default:
+                break;
             }
-            return UnitPrice;    
         }
-        else // No pricing info, so might be a list of possible parts. Look for a link to the part page.
-            Url = GetDigikeyPartUrl(Html, PartNumber);
+        return Price;
     }
-    return "***Unknown***";
+    return "C???";
 }
 
 void GetPartPrices(void)
@@ -848,18 +922,17 @@ void GetPartPrices(void)
         if (n2 < NumParts) {
             int i2 = Index[n2];
             if (PartValue[i1] == PartValue[i2] && PartDevice[i1] == PartDevice[i2])//XXX  && lname[i1] == lname[i2])
-            continue;
+			{
+				continue;
+			}
         }
         int Quantity = (n2 - n1) * BuildQty;
-        PartDigikeyPrice[i1] = GetDigikeyPartPrice(PartDigikeyNumber[i1], Quantity);
+        PartDigikeyPrice[i1] = GetDigikeyPrice(PartDigikeyNumber[i1],PartDigikeyNumbers[i1],PartManf[i1],PartManfNumber[i1],PartValue[i1],Quantity);
         TotalDigikeyPrice += strtod(PartDigikeyPrice[i1]) * Quantity;
-//        PartMouserPrice[i1] = GetMouserPartPrice(PartMouserNumber[i1],Quantity);
-//        TotalMouserPrice += strtod(PartMouserPrice[i1]) * Quantity;
         n1 = n2;
         i1 = Index[n2-1];
     }
     UnitDigikeyPrice = TotalDigikeyPrice / BuildQty;
-//    UnitMouserPrice = TotalMouserPrice / BuildQty;
     GenerateManfDistiList();
 }
 
@@ -1146,7 +1219,6 @@ dlgDialog("Bill Of Material - v" + Version) {
             dlgRadioButton("Manf+Distributors", ListType) GenerateManfDistiList();
             dlgRadioButton("Digikey Order", ListType) GenerateDigikeyOrderList();
             dlgRadioButton("Mouser Order", ListType) GenerateMouserOrderList();
-            dlgRadioButton("Seeed BOM", ListType) GenerateSeeedList();
             dlgRadioButton("Part Kit Labels", ListType) GenerateLabels();
         }
         dlgGroup("Output Format") {
