@@ -126,9 +126,11 @@ or online ordering features:  \
 <b>DIGIKEY#:</b> This attribute holds the Digi-Key part number.  \
 </li>  \
 <li>  \
-<b>DIGIKEY#S:</b> This attribute holds multiple Digi-Key part numbers for different values of the same device. Works best by adding the attributes for a specific package directly to a library like rcl or a custom one. The format is <pre>Value1:Manf1#:Digikey1#|Value2:Manf2#:Digikey2#[:Manf2]|...</pre>\
-When using this option, you must fill in DIGIKEY# and MANF# with the value 'USE_DIGIKEY#S' (no single quotes)\
-You can add an optional parameter of manufacturer name ([:Manf2] in the example, should not have [] when actually used) to override the 'MANF' field for that specific value. \
+<b>DIGIKEY#S:</b> \
+This attribute holds multiple Digi-Key part numbers for different values of the same device. \
+This works best by adding the attributes for a specific package directly to a library like rcl or a custom one. \
+The format is <pre>Value1:Manf1#:Digikey1#[:Manf1Name]|Value2:Manf2#:Digikey2#[:Manf2Name]|...</pre>\
+When using this option, you must fill in the DIGIKEY# and MANF# attributes with the string USE_DIGIKEY#S. \
 </li>  \
 <li>  \
 <b>MOUSER#:</b> This attribute holds the Mouser part number.  \
@@ -849,6 +851,166 @@ int ExtractNumbers(string Line)
     return NumNumbers;
 }
 
+string MakeStringUrlSafe(string s)
+{
+    // This function replaces characters that would screw-up a URL with their
+    // hex equivalent. For example, / is replaced with %2F.
+    // Unfortunately, this doesn't seem the fix the problem with the URL
+    // for a device like the PIC18F14K50-I/SS.
+    string dangerous_chars = "/";
+    string safe_s = s;
+    for(int i=0; i<strlen(dangerous_chars); i++)
+    {
+        string substrings[];
+        int num_substrings = strsplit(substrings, safe_s, dangerous_chars[i]);
+        if(num_substrings > 1)
+        {
+            string dangerous_char_replacement;
+            sprintf(dangerous_char_replacement, "'%%%2X'", dangerous_chars[i]);
+            safe_s = substrings[0];
+            for(int j=1; j<num_substrings; j++)
+            {
+                safe_s += dangerous_char_replacement + substrings[j];
+            }
+        }
+    }
+    return safe_s;
+}
+
+string ExtractDigikeyQtyPricing(string HtmlLine, int NeededQty)
+{
+    real Number[]; // Store quantity pricing info in this array.
+    string NumberText = "";
+    int n = 0;
+    for(int i=0; i<strlen(HtmlLine); i++)
+    {
+        if(isdigit(HtmlLine[i]) || (HtmlLine[i]=='.') || (HtmlLine[i]==',')) // Look for digits, decimal points, commas.
+        {
+            if(HtmlLine[i] != ',') // Keep everything but the commas in a number.
+                NumberText += HtmlLine[i];
+        }
+        else if(strlen(NumberText)!=0) // Found a non-numeric character terminating a number.
+        {
+            Number[n++] = strtod(NumberText); // Convert the number string that was found.
+            NumberText = ""; // Clear number string for continued scanning.
+        }
+    }
+
+    string UnitPrice;
+    switch(n)
+    {
+        case 2: // quantity + extended price format.
+            sprintf(UnitPrice, "%11.2f", Number[1]/Number[0]);
+            if(NeededQty < Number[0])
+                UnitPrice = "";
+            break;
+        case 3: // quantity + unit price + extended price format.
+            sprintf(UnitPrice, "%11.2f", Number[1]);
+            if(NeededQty < Number[0])
+                UnitPrice = "";
+            break;
+        default: // unknown format.
+            UnitPrice = "";
+            break;
+    }
+    return UnitPrice;
+}
+
+int HasSlash(string s)
+{
+    return strchr(s, '/') != -1; // Returns true if string contains a '/'.
+}
+
+string GetDigikeyPartUrl(string Html, string PartNumber)
+{
+    // Look for the href that points to the page describing the exact part number.
+    int pos = strstr(Html, ">" + PartNumber + "<"); // This is the part number in the link text portion of the href.
+    if(pos < 0)
+        return ""; // No idea what we have here, so abort.
+    Html = strsub(Html, 0, pos); // Keep everything up to the page link text.
+    
+    pos = strrstr(Html, "href=\""); // Look for the part's page link.
+    if(pos < 0)
+        return ""; // No link, so abort.
+    Html = strsub(Html, pos + strlen("href=\"")); // Remove everything preceding the page link.
+    
+    pos = strstr(Html, "\""); // Look for the quotation mark ending the page link.
+    if(pos < 0)
+        return ""; // No quotation, so abort.
+        
+    return "http://www.digikey.com" + strsub(Html, 0, pos); // Return the part page link.
+}
+
+string GetDigikeyPrice(string PartNumber, string PartNumbers, string PartManf, string PartManfNumber, string PartValue, int Quantity) {
+    if ((PartNumber == "") && (PartNumbers == ""))
+		return "";
+        
+	// Get part number, either from field or by parsing PartNumbers
+	string digikey_info = GetDigikeyInfo(PartManf, PartManfNumber, PartNumber, PartValue, PartNumbers);
+	string dikigey_entry_array[];
+	int number_of_parts = strsplit(dikigey_entry_array, digikey_info, ':');
+	PartManfNumber = dikigey_entry_array[0];
+	PartNumber     = dikigey_entry_array[1];
+    
+    string Url;
+    if(HasSlash(PartManfNumber) || HasSlash(PartNumber))
+        // If the part number has a '/' in it, then the part has to be found using the Digikey search function.
+        //Url = "http://www.digikey.com/scripts/DkSearch/dksus.dll?WT.z_header=search_go&lang=en&keywords="+PartNumber;
+        Url = "http://www.digikey.com/product-search/en?WT.z_header=search_go&lang=en&keywords="+PartNumber;
+    else
+        // If the part number doesn't have a slash in it, then we can figure out the Digikey page without a search.
+        sprintf(Url, "http://www.digikey.com/product-detail/en/%s/%s",PartManfNumber,PartNumber);
+    string Html;    
+    while(netget(Html, Url, 40) >= 0) // Get the HTML page from the URL address.
+    {
+        int StartPos = strstr(Html,"Extended Price"); // Look for the pricing information.
+        if(StartPos >= 0)
+        {
+            Html = strsub(Html, StartPos+strlen("Extended Price"));
+            int EndPos = strstr(Html,"</table>");
+            if(EndPos < 0)
+                return "***Bad HTML***";
+            Html = strsub(Html,0,EndPos);
+            string Line[];
+            int NumLines = strsplit(Line,Html,'\n');
+            string UnitPrice = "***Obsolete***";
+            for(int i=0; i<NumLines; i++)
+            {
+                string p = ExtractDigikeyQtyPricing(Line[i], Quantity);
+                if(p != "")
+                    UnitPrice = p;
+            }
+            return UnitPrice;    
+        }
+        else // No pricing info, so might be a list of possible parts from search function. Look for a link to the part page.
+            Url = GetDigikeyPartUrl(Html, PartNumber);
+    }
+    return "***Unknown***";
+}
+
+/*
+real Number[];
+
+int ExtractNumbers(string Line)
+{
+    int NumNumbers = 0;
+    string NumberText = "";
+    for(int i=0; i<strlen(Line); i++)
+    {
+        if(isdigit(Line[i]) || (Line[i]=='.') || (Line[i]==','))
+        {
+            if(Line[i] != ',')
+            NumberText += Line[i];
+        }
+        else if(strlen(NumberText)!=0)
+        {
+            Number[NumNumbers++] = strtod(NumberText);
+            NumberText = "";
+        }
+    }
+    return NumNumbers;
+}
+
 string GetDigikeyPrice(string PartNumber, string PartNumbers, string PartManf, string PartManfNumber, string PartValue, int Quantity) {
     string Html;
     if ((PartNumber == "") && (PartNumbers == ""))
@@ -862,8 +1024,10 @@ string GetDigikeyPrice(string PartNumber, string PartNumbers, string PartManf, s
 	PartManfNumber = dikigey_entry_array[0];
 	PartNumber     = dikigey_entry_array[1];
 
+    string UrlSafePartManfNumber = MakeStringUrlSafe(PartManfNumber);
+    string UrlSafePartNumber = MakeStringUrlSafe(PartNumber);
 	string part_url;
-	sprintf(part_url, "http://www.digikey.com/product-detail/en/%s/%s",PartManfNumber,PartNumber);
+	sprintf(part_url, "http://www.digikey.com/product-detail/en/%s/%s",UrlSafePartManfNumber,UrlSafePartNumber);
     if(netget(Html,part_url,40) >= 0)
     {
         int StartPos = strstr(Html,"Extended Price");
@@ -908,8 +1072,10 @@ string GetDigikeyPrice(string PartNumber, string PartNumbers, string PartManf, s
         }
         return Price;
     }
+    return neterror();
     return "C???";
 }
+*/
 
 void GetPartPrices(void)
 {
